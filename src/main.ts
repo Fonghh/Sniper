@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { Deer } from './animals/deer';
-import { createHerd } from './animals/herd';
+import { Herd, createHerd } from './animals/herd';
+import type { PlayerSignal } from './animals/perception';
+import { mulberry32 } from './world/random';
 import { STANDARD_ATMOSPHERE, FlightEnv } from './ballistics/ballistics';
 import { angleInfo, boreDirection, muzzleOrigin } from './ballistics/shot';
 import { vec3 } from './core/vec3';
@@ -17,7 +19,7 @@ import { createTerrainObject } from './world/terrainMesh';
 import { createVegetation, windUniforms } from './world/vegetation';
 import { Wind } from './world/wind';
 
-// P4: a grazing herd with anatomical hit detection and wound physiology. AI arrives in P5.
+// P5: the herd sees, hears and flees; wounded deer bed down. Tracking arrives in P6.
 
 const SEED = 1234;
 const RANGE_MAX = 1200;
@@ -59,6 +61,7 @@ const targets: Target[] = [];
 
 const herd: Deer[] = createHerd(terrain, spawn.target, 5, SEED + 7);
 for (const d of herd) scene.add(d.object);
+const herdAI = new Herd(herd, terrain, mulberry32(SEED + 8));
 
 const rifle = new Rifle();
 let elapsed = 0;
@@ -122,6 +125,7 @@ function onImpact(impact: Impact) {
       break;
     }
     case 'ground':
+      herdAI.impact(impact.point);
       hud.showToast(`${STRINGS.hitGround} · ${STRINGS.flight(impact.range, impact.time)}`);
       break;
     case 'lost':
@@ -141,7 +145,7 @@ function shoot() {
   const sight = vec3(d.x, d.y, d.z);
   const bore = boreDirection(sight, rifle.elevation);
   const muzzle = muzzleOrigin(vec3(eye.x, eye.y, eye.z), sight, SIGHT_HEIGHT);
-  for (const d of herd) d.alert();
+  herdAI.gunshot({ x: eye.x, z: eye.z });
   bullets.fire(rifle.ammo, new THREE.Vector3(muzzle.x, muzzle.y, muzzle.z), new THREE.Vector3(bore.x, bore.y, bore.z));
   navigator.vibrate?.(30);
 }
@@ -229,7 +233,15 @@ function frame() {
   camera.updateMatrixWorld();
 
   bullets.update(dt * timeScale, elapsed);
-  for (const d of herd) d.update(dt * timeScale);
+  const signal: PlayerSignal = {
+    x: player.eye.x,
+    y: player.eye.y,
+    z: player.eye.z,
+    prone: player.stance === 'prone',
+    speed: player.speed,
+    running: player.running,
+  };
+  herdAI.update(dt * timeScale, signal);
 
   const w = windAt(elapsed, player.eye);
   windUniforms.uTime.value = elapsed;
