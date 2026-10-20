@@ -6,7 +6,11 @@ import { mulberry32 } from './world/random';
 import { STANDARD_ATMOSPHERE, FlightEnv } from './ballistics/ballistics';
 import { angleInfo, boreDirection, muzzleOrigin } from './ballistics/shot';
 import { vec3 } from './core/vec3';
-import { BulletSystem, Impact } from './game/bullets';
+import { categorize } from './animals/physiology';
+import { BulletHandle, BulletSystem, Impact } from './game/bullets';
+import { recordHarvest } from './game/records';
+import { AnimalScore, scoreAnimal } from './game/scoring';
+import { HarvestScreen } from './ui/harvest';
 import { LOOK } from './game/config';
 import { Player } from './game/player';
 import { EYE_ZOOM, Rifle, SIGHT_HEIGHT } from './game/rifle';
@@ -21,7 +25,7 @@ import { createTerrainObject } from './world/terrainMesh';
 import { createVegetation, windUniforms } from './world/vegetation';
 import { Wind } from './world/wind';
 
-// P6: wounded deer leave blood trails that can be read and followed in tracking mode.
+// P7: bullet cam, harvesting, X-ray and ethical scoring.
 
 const SEED = 1234;
 const RANGE_MAX = 1200;
@@ -117,6 +121,10 @@ const actions: Actions = {
     if (tracking && player.scoped) player.scoped = false;
   },
   tap: (cx, cy) => {
+    if (bulletCam) {
+      endBulletCam();
+      return;
+    }
     if (!tracking || player.scoped) return;
     const r = canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
@@ -132,6 +140,10 @@ const actions: Actions = {
     if (player.scoped) player.stability.startHold();
   },
   releaseShot: (fire) => {
+    if (bulletCam) {
+      endBulletCam();
+      return;
+    }
     if (fire && player.scoped && rifle.tryFire()) shoot();
     player.stability.endHold();
   },
@@ -153,6 +165,8 @@ for (const d of herd) {
     const first = deer.hits[0];
     if ((condition === 'down' || condition === 'dead') && first && !fallen.has(deer)) {
       fallen.add(deer);
+      deer.downAt = elapsed;
+      deer.downPos = { x: deer.brain.x, z: deer.brain.z };
       hud.showToast(STRINGS.deerDown(elapsed - first.time), 4);
     }
   };
@@ -194,9 +208,117 @@ function shoot() {
   const bore = boreDirection(sight, rifle.elevation);
   const muzzle = muzzleOrigin(vec3(eye.x, eye.y, eye.z), sight, SIGHT_HEIGHT);
   herdAI.gunshot({ x: eye.x, z: eye.z });
-  bullets.fire(rifle.ammo, new THREE.Vector3(muzzle.x, muzzle.y, muzzle.z), new THREE.Vector3(bore.x, bore.y, bore.z));
+  const from = new THREE.Vector3(muzzle.x, muzzle.y, muzzle.z);
+  const dir = new THREE.Vector3(bore.x, bore.y, bore.z);
+  const forecast = bulletCamEnabled ? bullets.predictAnimalHit(rifle.ammo, from, dir, elapsed) : null;
+  const handle = bullets.fire(rifle.ammo, from, dir);
+  if (forecast && forecast.range > BULLET_CAM_MIN_RANGE) startBulletCam(handle);
   navigator.vibrate?.(30);
 }
+
+// ---- Bullet cam: slow-motion follow of long shots that will hit an animal ----
+
+const BULLET_CAM_MIN_RANGE = 150; // m
+const BULLET_CAM_SLOW = 0.06; // world time scale while the bullet flies
+const BULLET_CAM_HOLD = 1.3; // s of real time to linger on the impact
+let bulletCamEnabled = true;
+let bulletCam: { bullet: BulletHandle; hold: number; wasScoped: boolean } | null = null;
+
+function startBulletCam(bullet: BulletHandle) {
+  bulletCam = { bullet, hold: BULLET_CAM_HOLD, wasScoped: player.scoped };
+  bullet.mesh.scale.setScalar(3); // a real bullet is too small to read on a phone
+  player.stability.endHold();
+  document.body.classList.add('bulletcam');
+  camera.clearViewOffset();
+  camera.fov = 40;
+  camera.updateProjectionMatrix();
+}
+
+function endBulletCam() {
+  if (!bulletCam) return;
+  player.scoped = bulletCam.wasScoped;
+  bulletCam = null;
+  document.body.classList.remove('bulletcam');
+  camera.fov = 0; // forces the normal projection to be rebuilt next frame
+}
+
+/** World time scale for this frame of the bullet cam; ends the cam after lingering on the impact. */
+function bulletCamTimeScale(dt: number): number {
+  const cam = bulletCam!;
+  if (!cam.bullet.done) return BULLET_CAM_SLOW;
+  cam.hold -= dt;
+  if (cam.hold <= 0) {
+    endBulletCam();
+    return 1;
+  }
+  return 0.3;
+}
+
+/** Chases the bullet from just behind and beside it. Call after bullets have moved this frame. */
+function placeBulletCam() {
+  const cam = bulletCam!;
+  if (cam.bullet.done) {
+    camera.lookAt(cam.bullet.position);
+    return;
+  }
+  const up = new THREE.Vector3(0, 1, 0);
+  const v = cam.bullet.velocity.clone().normalize();
+  const side = new THREE.Vector3().crossVectors(v, up).normalize();
+  // Portrait view is only ~±9° wide, so stay nearly in line with the bullet to keep it in frame.
+  camera.position.copy(cam.bullet.position).addScaledVector(v, -0.6).addScaledVector(side, 0.03).addScaledVector(up, 0.08);
+  camera.lookAt(cam.bullet.position.clone().addScaledVector(v, 1.5));
+}
+
+// ---- Harvest ----
+
+const HARVEST_REACH = 4; // m
+const harvestScreen = new HarvestScreen();
+const harvestBtn = document.getElementById('btn-harvest')!;
+harvestBtn.textContent = STRINGS.harvest;
+const harvestedScores: AnimalScore[] = [];
+let sessionScore = 0;
+
+function nearestHarvestable(): Deer | null {
+  let best: Deer | null = null;
+  let bestD = HARVEST_REACH;
+  for (const d of herd) {
+    if (!d.harvestable) continue;
+    const dist = Math.hypot(d.brain.x - player.pos.x, d.brain.z - player.pos.z);
+    if (dist < bestD) {
+      bestD = dist;
+      best = d;
+    }
+  }
+  return best;
+}
+
+function harvest(deer: Deer) {
+  const first = deer.hits[0];
+  const shots = deer.hits.map((h) => ({ category: categorize(h.wound), range: h.range, time: h.time }));
+  const down = deer.downPos ?? { x: deer.brain.x, z: deer.brain.z };
+  const runDistance = Math.hypot(down.x - first.entryWorld.x, down.z - first.entryWorld.z);
+  const score = scoreAnimal({ shots, downAt: deer.downAt, runDistance });
+  harvestedScores.push(score);
+  sessionScore += score.total;
+  const organs = [...new Set(deer.hits.flatMap((h) => h.wound.organs.map((o) => o.organ.name)))];
+  deer.harvested = true;
+  scene.remove(deer.object);
+  harvestScreen.show({
+    deer,
+    buck: deer.buck,
+    score,
+    firstCategory: shots[0].category,
+    firstRange: first.range,
+    extraShots: shots.length - 1,
+    runDistance,
+    organs: organs.length ? organs : [STRINGS.category.muscle],
+    newBest: recordHarvest(score.total),
+  });
+}
+harvestBtn.addEventListener('click', () => {
+  const d = nearestHarvestable();
+  if (d) harvest(d);
+});
 
 /** Auto rangefinder: first thing the sight line meets (targets or terrain). */
 function rangeReading(): string {
@@ -251,6 +373,12 @@ resize();
   setTimeScale: (s: number) => (timeScale = s),
   setWindScale: (s: number) => (windScale = s),
   setDebugHits: (on: boolean) => (debugHits = on),
+  setBulletCam: (on: boolean) => (bulletCamEnabled = on),
+  harvestNearest: () => {
+    const d = nearestHarvestable();
+    if (d) harvest(d);
+    return !!d;
+  },
   signs: herdAI.signs,
 };
 
@@ -261,18 +389,23 @@ let rangeTimer = 0;
 let rangeText: string = STRINGS.noRange;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
-  elapsed += dt * timeScale;
   const f = input.sample();
+  // World time runs slow during the bullet cam; the player is frozen while it plays.
+  const camScale = bulletCam ? bulletCamTimeScale(dt) : 1;
+  const worldDt = dt * timeScale * camScale;
+  elapsed += worldDt;
 
-  player.update(dt, f, rifle.magnification * EYE_ZOOM);
+  if (!bulletCam && !harvestScreen.open) player.update(dt, f, rifle.magnification * EYE_ZOOM);
   rifle.update(dt);
   const view = player.viewAngles();
-  camera.position.copy(player.eye);
-  camera.rotation.set(view.pitch, view.yaw, 0);
+  if (!bulletCam) {
+    camera.position.copy(player.eye);
+    camera.rotation.set(view.pitch, view.yaw, 0);
+  }
   const fov = player.scoped
     ? (2 * Math.atan(Math.tan(((LOOK.verticalFov / 2) * Math.PI) / 180) / (rifle.magnification * EYE_ZOOM)) * 180) / Math.PI
     : LOOK.verticalFov;
-  if (camera.fov !== fov) {
+  if (!bulletCam && camera.fov !== fov) {
     camera.fov = fov;
     // Shift the projection centre up to the lens centre so the reticle marks the true aim point.
     const { clientWidth: w, clientHeight: h } = canvas;
@@ -282,7 +415,8 @@ function frame() {
   }
   camera.updateMatrixWorld();
 
-  bullets.update(dt * timeScale, elapsed);
+  bullets.update(worldDt, elapsed);
+  if (bulletCam) placeBulletCam();
   const signal: PlayerSignal = {
     x: player.eye.x,
     y: player.eye.y,
@@ -291,7 +425,8 @@ function frame() {
     speed: player.speed,
     running: player.running,
   };
-  herdAI.update(dt * timeScale, signal);
+  herdAI.update(worldDt, signal);
+  document.body.classList.toggle('can-harvest', !!nearestHarvestable());
   if (tracking) explainDiscoveries(herdAI.signs.discover(player.pos.x, player.pos.z));
   signView.update(dt, tracking, player.pos.x, player.pos.z);
 
@@ -301,7 +436,7 @@ function frame() {
   const windHeading = Math.atan2(-w.x, -w.z);
   windArrow.style.transform = `rotate(${player.yaw - windHeading}rad)`;
   windText.textContent = STRINGS.wind(Math.hypot(w.x, w.z));
-  info.textContent = `${STRINGS.altitude(player.pos.y)} · ${STRINGS.speed(player.speed)}`;
+  info.textContent = `${STRINGS.altitude(player.pos.y)} · ${STRINGS.speed(player.speed)}${sessionScore ? ` · ${STRINGS.score(sessionScore)}` : ''}`;
 
   rangeTimer -= dt;
   if (player.scoped && rangeTimer <= 0) {

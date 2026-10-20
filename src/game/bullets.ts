@@ -15,7 +15,16 @@ export type Impact =
   | { kind: 'ground'; point: THREE.Vector3; range: number; time: number }
   | { kind: 'lost' };
 
+/** Read-only view of a bullet in flight, for the bullet camera. */
+export interface BulletHandle {
+  readonly mesh: THREE.Object3D;
+  readonly position: THREE.Vector3;
+  readonly velocity: THREE.Vector3;
+  readonly done: boolean;
+}
+
 interface LiveBullet {
+  mesh: THREE.Mesh;
   ammo: Ammo;
   state: BulletState;
   origin: THREE.Vector3;
@@ -45,6 +54,8 @@ export class BulletSystem {
   private bullets: LiveBullet[] = [];
   private puffs: Puff[] = [];
   private now = 0; // world time of the current update, stamped on animal hits
+  private bulletGeo = new THREE.CylinderGeometry(0.004, 0.0078, 0.03, 8).rotateX(Math.PI / 2);
+  private bulletMat = new THREE.MeshLambertMaterial({ color: 0xc89b4a, emissive: 0x3a2a10 });
   private trailMat = new THREE.LineBasicMaterial({ color: 0xfff6c8, transparent: true, opacity: 0.7 });
 
   constructor(
@@ -56,7 +67,26 @@ export class BulletSystem {
     private onImpact: (impact: Impact) => void,
   ) {}
 
-  fire(ammo: Ammo, origin: THREE.Vector3, dir: THREE.Vector3) {
+  /**
+   * Dry-runs a shot through the current world without changing anything. Returns the animal it
+   * would hit and at what range, or null. Animals may move during flight, so this is a forecast.
+   */
+  predictAnimalHit(ammo: Ammo, origin: THREE.Vector3, dir: THREE.Vector3, worldTime: number): { deer: Deer; range: number } | null {
+    const env = this.env(worldTime);
+    const d = dir.clone().normalize();
+    let s: BulletState = { pos: vec3(origin.x, origin.y, origin.z), vel: vec3(d.x * ammo.muzzleVelocity, d.y * ammo.muzzleVelocity, d.z * ammo.muzzleVelocity), time: 0 };
+    while (s.time < MAX_FLIGHT) {
+      const next = stepBullet(ammo, env, s, DEFAULT_STEP);
+      const a = toV3(s.pos);
+      const c = toV3(next.pos);
+      for (const deer of this.animals) if (deer.probe(a, c)) return { deer, range: c.distanceTo(origin) };
+      if (next.pos.y < this.terrain.height(next.pos.x, next.pos.z)) return null;
+      s = next;
+    }
+    return null;
+  }
+
+  fire(ammo: Ammo, origin: THREE.Vector3, dir: THREE.Vector3): BulletHandle {
     const d = dir.clone().normalize();
     const state: BulletState = {
       pos: vec3(origin.x, origin.y, origin.z),
@@ -66,7 +96,24 @@ export class BulletSystem {
     const line = new THREE.Line(new THREE.BufferGeometry(), this.trailMat.clone());
     line.frustumCulled = false;
     this.scene.add(line);
-    this.bullets.push({ ammo, state, origin: origin.clone(), trail: [origin.clone()], line, done: false, fade: TRAIL_LIFE, passed: new Set() });
+    const mesh = new THREE.Mesh(this.bulletGeo, this.bulletMat);
+    mesh.position.copy(origin);
+    mesh.lookAt(origin.clone().add(d));
+    this.scene.add(mesh);
+    const live: LiveBullet = { mesh, ammo, state, origin: origin.clone(), trail: [origin.clone()], line, done: false, fade: TRAIL_LIFE, passed: new Set() };
+    this.bullets.push(live);
+    return {
+      mesh,
+      get position() {
+        return live.mesh.position;
+      },
+      get velocity() {
+        return toV3(live.state.vel);
+      },
+      get done() {
+        return live.done;
+      },
+    };
   }
 
   update(dt: number, worldTime: number) {
@@ -88,12 +135,18 @@ export class BulletSystem {
           if (!quiet(b)) this.onImpact({ kind: 'lost' });
         }
       }
-      if (!b.done) b.trail.push(toV3(b.state.pos));
+      if (!b.done) {
+        b.trail.push(toV3(b.state.pos));
+        b.mesh.position.copy(toV3(b.state.pos));
+        b.mesh.lookAt(b.mesh.position.clone().add(toV3(b.state.vel)));
+      } else {
+        b.mesh.visible = false;
+      }
       b.line.geometry.setFromPoints(b.trail);
     }
     this.bullets = this.bullets.filter((b) => {
       if (b.fade > 0) return true;
-      this.scene.remove(b.line);
+      this.scene.remove(b.line, b.mesh);
       b.line.geometry.dispose();
       return false;
     });
@@ -117,13 +170,13 @@ export class BulletSystem {
     const c = toV3(next.pos);
     for (const deer of this.animals) {
       if (b.passed.has(deer)) continue;
-      const res = deer.testHit(a, c, b.ammo, length(s.vel), this.now);
+      const res = deer.testHit(a, c, b.ammo, length(s.vel), this.now, b.origin);
       if (!res) continue;
       const { hit } = res;
       b.passed.add(deer);
       b.trail.push(hit.entryWorld.clone());
       this.spawnPuff(hit.entryWorld, 0x9b1b1b, 0.25);
-      this.onImpact({ kind: 'animal', deer, hit, range: hit.entryWorld.distanceTo(b.origin), time: next.time });
+      this.onImpact({ kind: 'animal', deer, hit, range: hit.range, time: next.time });
       const w = hit.wound;
       if (!hit.exitWorld || w.exitVelocity < 80) {
         b.done = true;

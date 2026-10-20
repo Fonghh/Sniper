@@ -83,11 +83,14 @@ export interface DeerModel {
   tail: THREE.Group;
 }
 
-/** Builds a visual mesh for one hull shape, relative to `origin` (its part's pivot). */
-function shapeMesh(shape: Shape, origin: THREE.Vector3): THREE.Object3D {
+/**
+ * Builds a mesh for one anatomy shape, relative to `origin` (its part's pivot). `override`
+ * replaces the deer's own materials (used by the X-ray view).
+ */
+export function shapeMesh(shape: Shape, origin: THREE.Vector3, override?: THREE.Material): THREE.Object3D {
   const rel = (p: { x: number; y: number; z: number }) => v(p.x, p.y, p.z).sub(origin);
-  const mat = shape.skin === 'hoof' ? DARK_MAT : COAT_MAT;
-  if (shape.kind === 'body') return new THREE.Mesh(bodyGeometry(), VERTEX_MAT);
+  const mat = override ?? (shape.skin === 'hoof' ? DARK_MAT : COAT_MAT);
+  if (shape.kind === 'body') return new THREE.Mesh(bodyGeometry(), override ?? VERTEX_MAT);
   if (shape.kind === 'ellipsoid') return blob(rel(shape.c), v(shape.r.x, shape.r.y, shape.r.z), mat, 9, 7);
   const mesh = segment(rel(shape.a), rel(shape.b), shape.r, shape.rb, mat, 8);
   // Round the joints so segments meet without gaps.

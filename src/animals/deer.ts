@@ -16,6 +16,10 @@ const BEDDED_DROP = 0.42; // m the body sinks when lying with legs folded
 
 export interface DeerHit {
   wound: WoundResult;
+  /** Body pose at the moment of the hit, so the X-ray can show the wound as it happened. */
+  pose: Pose;
+  /** Shooter-to-entry distance, m. */
+  range: number;
   /** World-space points for later X-ray display. */
   entryWorld: THREE.Vector3;
   exitWorld: THREE.Vector3 | null;
@@ -33,6 +37,10 @@ export class Deer {
   /** Where trail signs go; set by the Herd. */
   signSink: ((sign: Omit<Sign, 'id'>) => void) | null = null;
   private trail: TrailRecorder | null = null;
+  /** Game time and place it went down (set by the game when the condition changes). */
+  downAt: number | null = null;
+  downPos: { x: number; z: number } | null = null;
+  harvested = false;
   private fall = 0; // 0..1 fall animation progress
   private groundY: number;
   private lastCondition: Condition = 'healthy';
@@ -47,7 +55,7 @@ export class Deer {
     y: number,
     z: number,
     yaw: number,
-    buck: boolean,
+    readonly buck: boolean,
     private rand: () => number,
   ) {
     this.model = createDeerModel(buck);
@@ -68,7 +76,12 @@ export class Deer {
 
   /** Only standing animals are hit-tested; fallen ones are treated as terrain for now. */
   get hittable(): boolean {
-    return this.condition === 'healthy' || this.condition === 'wounded';
+    return !this.harvested && (this.condition === 'healthy' || this.condition === 'wounded');
+  }
+
+  /** Down or dead, and not yet collected. */
+  get harvestable(): boolean {
+    return !this.harvested && (this.condition === 'down' || this.condition === 'dead');
   }
 
   get body(): BodyState {
@@ -171,6 +184,15 @@ export class Deer {
     this.brain.scare(from, this.body);
   }
 
+  /** Side-effect-free version of testHit: would this segment enter the body? */
+  probe(a: THREE.Vector3, b: THREE.Vector3): boolean {
+    if (!this.hittable) return false;
+    this.inv.copy(this.model.root.matrixWorld).invert();
+    const la = a.clone().applyMatrix4(this.inv);
+    const lb = b.clone().applyMatrix4(this.inv);
+    return findEntry(vec3(la.x, la.y, la.z), vec3(lb.x, lb.y, lb.z), this.pose) !== null;
+  }
+
   /**
    * Tests a world-space bullet segment against the body. On a hit, applies the wound and
    * returns it together with the world exit point (if the bullet passed through).
@@ -181,6 +203,7 @@ export class Deer {
     ammo: Ammo,
     velocity: number,
     time: number,
+    origin: THREE.Vector3,
   ): { hit: DeerHit; fraction: number } | null {
     if (!this.hittable) return null;
     this.inv.copy(this.model.root.matrixWorld).invert();
@@ -193,9 +216,12 @@ export class Deer {
     const wound = traceWound(ammo, vec3(entry.x, entry.y, entry.z), vec3(dir.x, dir.y, dir.z), velocity, this.pose);
     const toWorld = (v: { x: number; y: number; z: number }) =>
       new THREE.Vector3(v.x, v.y, v.z).applyMatrix4(this.model.root.matrixWorld);
+    const entryWorld = toWorld(entry);
     const hit: DeerHit = {
       wound,
-      entryWorld: toWorld(entry),
+      pose: { neckPitch: this.pose.neckPitch, legs: [...this.pose.legs] as Pose['legs'] },
+      range: entryWorld.distanceTo(origin),
+      entryWorld,
       exitWorld: wound.exit ? toWorld(wound.exit) : null,
       time,
     };

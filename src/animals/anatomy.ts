@@ -211,6 +211,8 @@ export interface OrganHit {
 
 export interface WoundResult {
   entry: Vec3;
+  /** Direction of travel through the body (unit, local frame). */
+  dir: Vec3;
   /** Where the bullet left the body, or null if it stopped inside. */
   exit: Vec3 | null;
   exitVelocity: number;
@@ -264,11 +266,11 @@ export function traceWound(ammo: Ammo, entry: Vec3, dir: Vec3, velocity: number,
       }
     }
     if (energy <= 0) {
-      return { entry, exit: null, exitVelocity: 0, penetration: travelled, channel, organs: toHits(lengths) };
+      return { entry, dir, exit: null, exitVelocity: 0, penetration: travelled, channel, organs: toHits(lengths) };
     }
   }
   const exitVelocity = Math.sqrt((2 * energy) / ammo.massKg);
-  return { entry, exit: lastInside, exitVelocity, penetration: travelled, channel, organs: toHits(lengths) };
+  return { entry, dir, exit: lastInside, exitVelocity, penetration: travelled, channel, organs: toHits(lengths) };
 }
 
 function toHits(lengths: Map<OrganId, number>): OrganHit[] {

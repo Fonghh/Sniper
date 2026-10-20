@@ -125,3 +125,47 @@ body.scoped #scope { display: block; }
 /* ---- Tracking mode ---- */
 #btn-track.active { background: rgba(200, 160, 40, 0.75); border-color: #ffe066; }
 body.tracking #game { filter: saturate(0.55) brightness(0.92); }
+
+/* ---- Harvest ---- */
+#btn-harvest {
+  display: none; position: absolute; left: 50%; bottom: 190px; transform: translateX(-50%);
+  padding: 12px 22px; font-size: 16px; font-weight: 600; background: rgba(60, 120, 50, 0.8);
+}
+body.can-harvest:not(.scoped):not(.harvesting) #btn-harvest { display: block; }
+#harvest {
+  display: none; position: absolute; left: 14px; right: 14px; top: 50%; transform: translateY(-50%);
+  max-height: calc(100% - 40px); overflow-y: auto; padding: 16px; border-radius: 16px;
+  background: rgba(18, 22, 18, 0.92); color: #eef2e6; box-shadow: 0 6px 30px rgba(0, 0, 0, 0.5);
+}
+#harvest.show { display: block; }
+body.harvesting #mode-buttons, body.harvesting #joystick, body.harvesting #hint { display: none; }
+#h-head { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+#h-grade {
+  width: 58px; height: 58px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 32px; font-weight: 800; background: #3a3f36; color: #fff;
+}
+#h-grade[data-grade='S'] { background: #c99a1a; }
+#h-grade[data-grade='A'] { background: #4f8f3a; }
+#h-grade[data-grade='B'] { background: #3a6f8f; }
+#h-grade[data-grade='D'] { background: #8f3a3a; }
+#h-title { font-size: 18px; font-weight: 700; }
+#h-verdict { font-size: 14px; opacity: 0.8; }
+#h-lines { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+#h-lines li { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+#h-lines b { color: #a5e07a; }
+#h-lines b.neg { color: #f08a7a; }
+#h-facts { font-size: 12px; opacity: 0.7; margin: 8px 0; }
+#h-total-row { display: flex; justify-content: space-between; align-items: baseline; margin: 6px 0 10px; }
+#h-total { font-size: 26px; font-weight: 800; }
+#h-record { color: #ffd23f; font-weight: 700; }
+#xray { display: none; width: 100%; height: 220px; border-radius: 10px; background: #0b1a24; margin-bottom: 10px; }
+#xray.show { display: block; }
+#h-buttons { display: flex; gap: 10px; }
+#h-buttons .btn { flex: 1; height: 44px; font-size: 15px; }
+#h-score { color: #ffe9a6; }
+
+/* ---- Bullet cam ---- */
+body.bulletcam #hud, body.bulletcam #mode-buttons, body.bulletcam #scope, body.bulletcam #zero,
+body.bulletcam #joystick, body.bulletcam #hint, body.bulletcam #status { display: none !important; }
+body.bulletcam.scoped #btn-fire.scoped-only, body.bulletcam.scoped #zero.scoped-only { display: none !important; }
+body.bulletcam #game { filter: contrast(1.08) saturate(1.1); }
