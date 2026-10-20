@@ -78,7 +78,8 @@ export interface RestPoint {
   radius: number;
 }
 
-export function createVegetation(terrain: Terrain): { group: THREE.Group; rests: RestPoint[] } {
+/** `grassScale` thins grass tufts (the main fill-rate cost) on slower devices. */
+export function createVegetation(terrain: Terrain, grassScale = 1): { group: THREE.Group; rests: RestPoint[] } {
   const group = new THREE.Group();
   const rests: RestPoint[] = [];
   const forest = createNoise2D(terrain.seed + 50);
@@ -109,7 +110,7 @@ export function createVegetation(terrain: Terrain): { group: THREE.Group; rests:
   group.add(instanced(rockGeo, new THREE.MeshLambertMaterial({ color: 0x86847a, flatShading: true }), rocks, (i) => rockSizes[i]));
 
   // Grass tufts: the main visual wind cue.
-  const grass = scatter(terrain, 14000, terrain.seed + 12, (_x, _z, h, slope) => slope < 0.6 && h < 150);
+  const grass = scatter(terrain, Math.round(14000 * grassScale), terrain.seed + 12, (_x, _z, h, slope) => slope < 0.6 && h < 150);
   const tuftGeo = new THREE.ConeGeometry(0.18, 0.7, 3).translate(0, 0.35, 0);
   group.add(instanced(tuftGeo, swayMaterial(0x7fa043, 0.08), grass, () => 0.7 + rand() * 0.8));
 

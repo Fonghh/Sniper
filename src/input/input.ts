@@ -41,6 +41,8 @@ export class Input {
   private lookLast = { x: 0, y: 0 };
   private lookStart = { x: 0, y: 0, t: 0 };
   private mouseShot = false;
+  private gyro = false;
+  private lastOrientation: { beta: number; gamma: number } | null = null;
   readonly isTouch: boolean;
 
   constructor(
@@ -67,10 +69,35 @@ export class Input {
       if (document.pointerLockElement === canvas) actions.stepZero(e.deltaY < 0 ? 1 : -1);
     });
 
+    addEventListener('deviceorientation', (e) => this.onOrientation(e));
     canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     addEventListener('pointermove', (e) => this.onPointerMove(e));
     addEventListener('pointerup', (e) => this.onPointerUp(e));
     addEventListener('pointercancel', (e) => this.onPointerUp(e));
+  }
+
+  /**
+   * Gyro aim: tilting the phone nudges the view (scaled down further by the scope).
+   * iOS requires a permission prompt, which must come from a user gesture such as the toggle.
+   */
+  setGyro(on: boolean) {
+    this.gyro = on;
+    this.lastOrientation = null;
+    const DOE = (window as unknown as { DeviceOrientationEvent?: { requestPermission?: () => Promise<string> } })
+      .DeviceOrientationEvent;
+    if (on && DOE?.requestPermission) DOE.requestPermission().catch(() => (this.gyro = false));
+  }
+
+  private onOrientation(e: DeviceOrientationEvent) {
+    if (!this.gyro || e.beta === null || e.gamma === null) return;
+    const now = { beta: e.beta, gamma: e.gamma };
+    const last = this.lastOrientation;
+    this.lastOrientation = now;
+    if (!last || !this.actions.isScoped()) return;
+    const deg = Math.PI / 180;
+    // Portrait: tilting forward/back (beta) pitches, rolling left/right (gamma) turns.
+    this.pitch += (now.beta - last.beta) * deg * 0.6;
+    this.yaw -= (now.gamma - last.gamma) * deg * 0.6;
   }
 
   private onKey(e: KeyboardEvent) {

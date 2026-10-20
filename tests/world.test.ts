@@ -48,6 +48,36 @@ describe('terrain', () => {
   });
 });
 
+describe('spawns and lookouts', () => {
+  const t = new Terrain(1234);
+
+  it('offers several distinct opening positions, each with a clear view of its meadow', () => {
+    const spawns = t.spawnPoints(4);
+    expect(spawns.length).toBeGreaterThanOrEqual(3);
+    for (const s of spawns) {
+      const eye = t.height(s.x, s.z) + 1.65;
+      const ty = t.height(s.target.x, s.target.z) + 1;
+      expect(t.lineOfSight(s.x, eye, s.z, s.target.x, ty, s.target.z, 2)).toBe(true);
+    }
+    for (let i = 0; i < spawns.length; i++)
+      for (let j = i + 1; j < spawns.length; j++)
+        expect(Math.hypot(spawns[i].x - spawns[j].x, spawns[i].z - spawns[j].z)).toBeGreaterThanOrEqual(150);
+  });
+
+  it('places 4–6 lookouts on high ground, spread apart, inside the map', () => {
+    const looks = t.lookouts(6);
+    expect(looks.length).toBeGreaterThanOrEqual(4);
+    const heights: number[] = [];
+    for (let x = -400; x <= 400; x += 25) for (let z = -400; z <= 400; z += 25) heights.push(t.height(x, z));
+    const median = heights.sort((a, b) => a - b)[Math.floor(heights.length / 2)];
+    for (const l of looks) {
+      expect(t.height(l.x, l.z)).toBeGreaterThan(median);
+      expect(Math.abs(l.x)).toBeLessThan(HALF_MAP - 60);
+      expect(Math.abs(l.z)).toBeLessThan(HALF_MAP - 60);
+    }
+  });
+});
+
 describe('wind', () => {
   it('stays within 0..MAX_WIND and varies over time', () => {
     const wind = new Wind(5);

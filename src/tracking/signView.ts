@@ -31,11 +31,18 @@ export class SignView {
   private time = 0;
 
   constructor(
-    scene: THREE.Scene,
+    private scene: THREE.Scene,
     private terrain: Terrain,
     private book: SignBook,
   ) {
     scene.add(this.group);
+  }
+
+  dispose() {
+    this.scene.remove(this.group);
+    this.group.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.geometry.dispose();
+    });
   }
 
   private build(sign: Sign): View {

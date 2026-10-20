@@ -2,33 +2,43 @@ import * as THREE from 'three';
 import { Deer } from './animals/deer';
 import { Herd, createHerd } from './animals/herd';
 import type { PlayerSignal } from './animals/perception';
-import { mulberry32 } from './world/random';
+import { categorize } from './animals/physiology';
 import { STANDARD_ATMOSPHERE, FlightEnv } from './ballistics/ballistics';
 import { angleInfo, boreDirection, muzzleOrigin } from './ballistics/shot';
 import { vec3 } from './core/vec3';
-import { categorize } from './animals/physiology';
 import { BulletHandle, BulletSystem, Impact } from './game/bullets';
-import { recordHarvest } from './game/records';
-import { AnimalScore, scoreAnimal } from './game/scoring';
-import { HarvestScreen } from './ui/harvest';
 import { LOOK } from './game/config';
 import { Player } from './game/player';
+import { loadRecords, recordHarvest, recordSession } from './game/records';
 import { EYE_ZOOM, Rifle, SIGHT_HEIGHT } from './game/rifle';
+import { AnimalScore, UNRECOVERED_PENALTY, scoreAnimal, sessionTotal } from './game/scoring';
+import { Settings, loadSettings, saveSettings } from './game/settings';
 import type { Target } from './game/targets';
 import { STRINGS } from './i18n';
 import { Actions, Input } from './input/input';
-import { Hud, SCOPE_CENTER_Y } from './ui/hud';
 import type { Sign } from './tracking/signs';
 import { SignView } from './tracking/signView';
-import { Terrain } from './world/terrain';
+import { HarvestScreen } from './ui/harvest';
+import { Hud, SCOPE_CENTER_Y } from './ui/hud';
+import { MapView } from './ui/mapView';
+import { Screens } from './ui/screens';
+import { applyDaylight } from './world/daylight';
+import { Lookouts } from './world/lookouts';
+import { mulberry32 } from './world/random';
+import { SpawnPoint, Terrain } from './world/terrain';
 import { createTerrainObject } from './world/terrainMesh';
 import { createVegetation, windUniforms } from './world/vegetation';
 import { Wind } from './world/wind';
 
-// P7: bullet cam, harvesting, X-ray and ethical scoring.
+// Game flow: cabin → hunt (pause menu, map, harvests) → end-of-hunt summary → cabin.
 
 const SEED = 1234;
 const RANGE_MAX = 1200;
+const HERD_SIZE = 5;
+/** Hunt clock (seconds): light fades from DUSK_START, a warning at DUSK_WARN, the hunt ends at HUNT_END. */
+const DUSK_START = 510;
+const DUSK_WARN = 600;
+const HUNT_END = 660;
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const info = document.getElementById('info')!;
@@ -36,41 +46,71 @@ const hint = document.getElementById('hint')!;
 const windArrow = document.getElementById('wind-arrow')!;
 const windText = document.getElementById('wind-text')!;
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const settings: Settings = loadSettings();
+const isTouch = matchMedia('(pointer: coarse)').matches;
 
-const SKY = 0xa9cbe0;
+// ---- Renderer and static world ----
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isTouch });
+const MAX_PIXEL_RATIO = Math.min(devicePixelRatio, isTouch ? 1.75 : 2);
+let pixelRatio = MAX_PIXEL_RATIO;
+renderer.setPixelRatio(pixelRatio);
+
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(SKY);
-scene.fog = new THREE.Fog(SKY, 350, 1300);
-
+scene.background = new THREE.Color(0xa9cbe0);
+scene.fog = new THREE.Fog(0xa9cbe0, 350, 1300);
 const camera = new THREE.PerspectiveCamera(LOOK.verticalFov, 9 / 16, 0.1, 2500);
 camera.rotation.order = 'YXZ';
-
-scene.add(new THREE.HemisphereLight(0xdfefff, 0x4a5a2a, 1.1));
+const hemi = new THREE.HemisphereLight(0xdfefff, 0x4a5a2a, 1.1);
 const sun = new THREE.DirectionalLight(0xfff2d6, 1.7);
 sun.position.set(300, 400, 150);
-scene.add(sun);
+scene.add(hemi, sun);
 
 const terrain = new Terrain(SEED);
 const wind = new Wind(SEED);
 scene.add(createTerrainObject(terrain));
-const vegetation = createVegetation(terrain);
+// Phones get fewer grass tufts; they are the main fill-rate cost.
+const vegetation = createVegetation(terrain, isTouch ? 0.55 : 1);
 scene.add(vegetation.group);
-
-const player = new Player(terrain, vegetation.rests);
-const spawn = terrain.spawnPoint();
-player.spawn(spawn.x, spawn.z, spawn.yaw, spawn.pitch);
+const lookouts = new Lookouts(terrain, 5);
+scene.add(lookouts.group);
+const spawns: SpawnPoint[] = terrain.spawnPoints(4);
 
 // Practice boards (createRange) are kept in code for a future practice range in the cabin.
 const targets: Target[] = [];
 
-const herd: Deer[] = createHerd(terrain, spawn.target, 5, SEED + 7);
-for (const d of herd) scene.add(d.object);
-const herdAI = new Herd(herd, terrain, mulberry32(SEED + 8));
-const signView = new SignView(scene, terrain, herdAI.signs);
+const player = new Player(terrain, vegetation.rests);
+const rifle = new Rifle();
+
+let windScale = 1; // test hook: 0 disables wind to isolate other effects
+/** Wind at a point, using height above the local valley floor for exposure. */
+function windAt(t: number, p: { x: number; y: number; z: number }) {
+  const floor = terrain.height(terrain.riverX(p.z), p.z);
+  const w = wind.at(t, p.y - floor);
+  return { x: w.x * windScale, y: w.y * windScale, z: w.z * windScale };
+}
+const flightEnv = (t: number): FlightEnv => ({ atmosphere: STANDARD_ATMOSPHERE, wind: (p) => windAt(t, p) });
+
+const vibrate = (ms: number) => {
+  if (settings.haptics) navigator.vibrate?.(ms);
+};
+
+// ---- Per-hunt state (rebuilt by startHunt) ----
+
+type Phase = 'cabin' | 'hunt' | 'paused' | 'summary';
+let phase: Phase = 'cabin';
+let herd: Deer[] = [];
+let herdAI: Herd;
+let signView: SignView;
+let bullets: BulletSystem;
+let elapsed = 0;
 let tracking = false;
 let debugHits = false; // shows organ names on hit; for development only
+let duskWarned = false;
+const explained = new Set<string>();
+const fallen = new Set<Deer>();
+let harvested: Array<{ buck: boolean; score: AnimalScore }> = [];
+let sessionScore = 0;
 
 function signHint(s: Sign): string {
   switch (s.kind) {
@@ -86,7 +126,6 @@ function signHint(s: Sign): string {
 }
 
 /** Explains newly noticed signs, without repeating the same kind of sign on a trail. */
-const explained = new Set<string>();
 function explainDiscoveries(found: Sign[]) {
   for (const s of found) {
     const key = `${s.deerId}:${s.kind}:${s.kind === 'track' ? s.running : s.blood}`;
@@ -97,17 +136,76 @@ function explainDiscoveries(found: Sign[]) {
   }
 }
 
-const rifle = new Rifle();
-let elapsed = 0;
+function startHunt() {
+  // Tear down the previous hunt.
+  for (const d of herd) scene.remove(d.object);
+  signView?.dispose();
+  bullets?.clear();
+  endBulletCam();
+  if (harvestScreen.open) harvestScreen.close();
 
-/** Wind at a point, using height above the local valley floor for exposure. */
-let windScale = 1; // test hook: 0 disables wind to isolate other effects
-function windAt(t: number, p: { x: number; y: number; z: number }) {
-  const floor = terrain.height(terrain.riverX(p.z), p.z);
-  const w = wind.at(t, p.y - floor);
-  return { x: w.x * windScale, y: w.y * windScale, z: w.z * windScale };
+  const huntSeed = Math.floor(Math.random() * 1e9);
+  const spawn = spawns[huntSeed % spawns.length];
+  player.reset();
+  player.spawn(spawn.x, spawn.z, spawn.yaw, spawn.pitch);
+  rifle.setZeroIndex(0);
+
+  herd = createHerd(terrain, spawn.target, HERD_SIZE, huntSeed);
+  for (const d of herd) {
+    scene.add(d.object);
+    d.onConditionChange = onDeerCondition;
+  }
+  herdAI = new Herd(herd, terrain, mulberry32(huntSeed + 1));
+  signView = new SignView(scene, terrain, herdAI.signs);
+  bullets = new BulletSystem(scene, terrain, targets, herd, flightEnv, onImpact);
+
+  elapsed = 0;
+  tracking = false;
+  duskWarned = false;
+  explained.clear();
+  fallen.clear();
+  harvested = [];
+  sessionScore = 0;
+  applyDaylight(0, scene, sun, hemi);
+  phase = 'hunt';
+  screens.show(null);
+  hint.textContent = input.isTouch ? STRINGS.hintTouch : STRINGS.hintDesktop;
 }
-const flightEnv = (t: number): FlightEnv => ({ atmosphere: STANDARD_ATMOSPHERE, wind: (p) => windAt(t, p) });
+
+/** Ends the hunt: penalties for wounded deer left behind, records, then the summary screen. */
+function endHunt() {
+  endBulletCam();
+  if (harvestScreen.open) harvestScreen.close();
+  player.scoped = false;
+  tracking = false;
+  // The HUD is not updated outside a hunt, so clear its mode classes now.
+  document.body.classList.remove('scoped', 'tracking', 'can-harvest');
+  const unrecovered = herd.filter((d) => d.hits.length > 0 && !d.harvested).length;
+  const total = sessionTotal(
+    harvested.map((h) => h.score),
+    unrecovered,
+  );
+  const best = harvested.length > 0 && recordSession(total);
+  phase = 'summary';
+  screens.showSummary(harvested, unrecovered, unrecovered * UNRECOVERED_PENALTY, total, best);
+  screens.setCabinBest(loadRecords());
+}
+
+function pause() {
+  if (phase !== 'hunt') return;
+  phase = 'paused';
+  player.stability.endHold();
+  screens.setClock(elapsed);
+  screens.show('menu');
+}
+
+function resume() {
+  if (phase !== 'paused') return;
+  phase = 'hunt';
+  screens.show(null);
+}
+
+// ---- Input actions ----
 
 const actions: Actions = {
   toggleScope: () => {
@@ -137,18 +235,18 @@ const actions: Actions = {
     }
   },
   beginShot: () => {
-    if (player.scoped) player.stability.startHold();
+    if (player.scoped && phase === 'hunt') player.stability.startHold();
   },
   releaseShot: (fire) => {
     if (bulletCam) {
       endBulletCam();
       return;
     }
-    if (fire && player.scoped && rifle.tryFire()) shoot();
+    if (fire && player.scoped && phase === 'hunt' && rifle.tryFire()) shoot();
     player.stability.endHold();
   },
   stepZero: (d) => {
-    if (rifle.setZeroIndex(rifle.zeroIndex + d)) navigator.vibrate?.(8);
+    if (rifle.setZeroIndex(rifle.zeroIndex + d)) vibrate(8);
   },
   cycleMagnification: () => rifle.cycleMagnification(),
   isScoped: () => player.scoped,
@@ -156,20 +254,60 @@ const actions: Actions = {
 
 const input = new Input(canvas, document.getElementById('joystick-knob')!, actions);
 const hud = new Hud(actions);
-hint.textContent = input.isTouch ? STRINGS.hintTouch : STRINGS.hintDesktop;
+const harvestScreen = new HarvestScreen();
+const mapView = new MapView(document.getElementById('map-canvas') as HTMLCanvasElement, terrain);
+const screens = new Screens(
+  {
+    startHunt,
+    resume,
+    quit: endHunt,
+    openMap: () => {
+      screens.push('map');
+      mapView.draw(lookouts.points, { x: player.pos.x, z: player.pos.z, yaw: player.yaw });
+    },
+    settingsChanged: (s) => {
+      saveSettings(s);
+      applySettings();
+    },
+  },
+  settings,
+);
+screens.recordsSource = loadRecords;
+screens.setCabinBest(loadRecords());
+screens.show('cabin');
+document.getElementById('btn-menu')!.addEventListener('click', pause);
+addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' || e.code === 'KeyP') phase === 'hunt' ? pause() : resume();
+});
+// Leaving the app mid-hunt pauses it.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pause();
+});
 
-// Report the moment each deer first falls (CNS hits go straight from wounded to dead).
-const fallen = new Set<Deer>();
-for (const d of herd) {
-  d.onConditionChange = (deer, condition) => {
-    const first = deer.hits[0];
-    if ((condition === 'down' || condition === 'dead') && first && !fallen.has(deer)) {
-      fallen.add(deer);
-      deer.downAt = elapsed;
-      deer.downPos = { x: deer.brain.x, z: deer.brain.z };
-      hud.showToast(STRINGS.deerDown(elapsed - first.time), 4);
-    }
-  };
+mapView.onTravel = (l) => {
+  player.spawn(l.x, l.z, player.yaw, -0.25);
+  player.scoped = false;
+  screens.pop();
+  resume();
+};
+
+function applySettings() {
+  windArrow.style.visibility = settings.windArrow ? 'visible' : 'hidden';
+  input.setGyro(settings.gyroAim);
+}
+applySettings();
+
+// ---- Shots and impacts ----
+
+function onDeerCondition(deer: Deer, condition: string) {
+  // Report the moment each deer first falls (CNS hits go straight from wounded to dead).
+  const first = deer.hits[0];
+  if ((condition === 'down' || condition === 'dead') && first && !fallen.has(deer)) {
+    fallen.add(deer);
+    deer.downAt = elapsed;
+    deer.downPos = { x: deer.brain.x, z: deer.brain.z };
+    hud.showToast(STRINGS.deerDown(elapsed - first.time), 4);
+  }
 }
 
 function onImpact(impact: Impact) {
@@ -195,7 +333,6 @@ function onImpact(impact: Impact) {
       break;
   }
 }
-const bullets = new BulletSystem(scene, terrain, targets, herd, flightEnv, onImpact);
 
 function aimDirection(): THREE.Vector3 {
   return new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
@@ -210,10 +347,10 @@ function shoot() {
   herdAI.gunshot({ x: eye.x, z: eye.z });
   const from = new THREE.Vector3(muzzle.x, muzzle.y, muzzle.z);
   const dir = new THREE.Vector3(bore.x, bore.y, bore.z);
-  const forecast = bulletCamEnabled ? bullets.predictAnimalHit(rifle.ammo, from, dir, elapsed) : null;
+  const forecast = settings.bulletCam ? bullets.predictAnimalHit(rifle.ammo, from, dir, elapsed) : null;
   const handle = bullets.fire(rifle.ammo, from, dir);
   if (forecast && forecast.range > BULLET_CAM_MIN_RANGE) startBulletCam(handle);
-  navigator.vibrate?.(30);
+  vibrate(30);
 }
 
 // ---- Bullet cam: slow-motion follow of long shots that will hit an animal ----
@@ -221,7 +358,6 @@ function shoot() {
 const BULLET_CAM_MIN_RANGE = 150; // m
 const BULLET_CAM_SLOW = 0.06; // world time scale while the bullet flies
 const BULLET_CAM_HOLD = 1.3; // s of real time to linger on the impact
-let bulletCamEnabled = true;
 let bulletCam: { bullet: BulletHandle; hold: number; wasScoped: boolean } | null = null;
 
 function startBulletCam(bullet: BulletHandle) {
@@ -272,11 +408,8 @@ function placeBulletCam() {
 // ---- Harvest ----
 
 const HARVEST_REACH = 4; // m
-const harvestScreen = new HarvestScreen();
 const harvestBtn = document.getElementById('btn-harvest')!;
 harvestBtn.textContent = STRINGS.harvest;
-const harvestedScores: AnimalScore[] = [];
-let sessionScore = 0;
 
 function nearestHarvestable(): Deer | null {
   let best: Deer | null = null;
@@ -298,11 +431,19 @@ function harvest(deer: Deer) {
   const down = deer.downPos ?? { x: deer.brain.x, z: deer.brain.z };
   const runDistance = Math.hypot(down.x - first.entryWorld.x, down.z - first.entryWorld.z);
   const score = scoreAnimal({ shots, downAt: deer.downAt, runDistance });
-  harvestedScores.push(score);
+  harvested.push({ buck: deer.buck, score });
   sessionScore += score.total;
   const organs = [...new Set(deer.hits.flatMap((h) => h.wound.organs.map((o) => o.organ.name)))];
   deer.harvested = true;
   scene.remove(deer.object);
+  const newBest = recordHarvest({
+    at: new Date().toISOString(),
+    buck: deer.buck,
+    grade: score.grade,
+    score: score.total,
+    range: first.range,
+    category: shots[0].category,
+  });
   harvestScreen.show({
     deer,
     buck: deer.buck,
@@ -312,7 +453,7 @@ function harvest(deer: Deer) {
     extraShots: shots.length - 1,
     runDistance,
     organs: organs.length ? organs : [STRINGS.category.muscle],
-    newBest: recordHarvest(score.total),
+    newBest,
   });
 }
 harvestBtn.addEventListener('click', () => {
@@ -363,33 +504,89 @@ function resize() {
 addEventListener('resize', resize);
 resize();
 
+// ---- Adaptive resolution: trade sharpness for a steady frame rate on slower phones ----
+
+let perfTime = 0;
+let perfFrames = 0;
+function adaptResolution(dt: number) {
+  perfTime += dt;
+  perfFrames++;
+  if (perfTime < 2) return;
+  const avg = perfTime / perfFrames;
+  perfTime = 0;
+  perfFrames = 0;
+  const next = avg > 1 / 40 ? pixelRatio - 0.25 : avg < 1 / 58 ? pixelRatio + 0.25 : pixelRatio;
+  const clamped = Math.max(1, Math.min(MAX_PIXEL_RATIO, next));
+  if (clamped !== pixelRatio) {
+    pixelRatio = clamped;
+    renderer.setPixelRatio(pixelRatio);
+    resize();
+  }
+}
+
 // Exposed for automated checks and debugging in the browser console.
+let timeScale = 1;
 (window as unknown as { __sniper: object }).__sniper = {
   player,
   rifle,
   actions,
   targets,
-  herd,
+  get herd() {
+    return herd;
+  },
+  get signs() {
+    return herdAI.signs;
+  },
+  get phase() {
+    return phase;
+  },
+  lookouts,
+  startHunt,
+  endHunt,
+  setElapsed: (t: number) => (elapsed = t),
   setTimeScale: (s: number) => (timeScale = s),
   setWindScale: (s: number) => (windScale = s),
   setDebugHits: (on: boolean) => (debugHits = on),
-  setBulletCam: (on: boolean) => (bulletCamEnabled = on),
   harvestNearest: () => {
     const d = nearestHarvestable();
     if (d) harvest(d);
     return !!d;
   },
-  signs: herdAI.signs,
 };
 
-/** Debug/test hook to fast-forward animal physiology and bullets. */
-let timeScale = 1;
+// ---- Frame loop ----
+
 const clock = new THREE.Clock();
 let rangeTimer = 0;
 let rangeText: string = STRINGS.noRange;
+let cabinTime = 0;
+
+/** The cabin backdrop: a slow pan across the valley from the best overlook. */
+function cabinCamera(dt: number) {
+  cabinTime += dt;
+  const s = spawns[0];
+  camera.position.set(s.x, terrain.height(s.x, s.z) + 3, s.z);
+  camera.rotation.set(s.pitch + 0.05, s.yaw + Math.sin(cabinTime * 0.08) * 0.5, 0);
+  if (camera.fov !== LOOK.verticalFov) {
+    camera.fov = LOOK.verticalFov;
+    camera.clearViewOffset();
+    camera.updateProjectionMatrix();
+  }
+}
+
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
+  adaptResolution(dt);
   const f = input.sample();
+  windUniforms.uTime.value += dt;
+
+  if (phase !== 'hunt') {
+    if (phase === 'cabin' || phase === 'summary') cabinCamera(dt);
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+    return;
+  }
+
   // World time runs slow during the bullet cam; the player is frozen while it plays.
   const camScale = bulletCam ? bulletCamTimeScale(dt) : 1;
   const worldDt = dt * timeScale * camScale;
@@ -429,14 +626,25 @@ function frame() {
   document.body.classList.toggle('can-harvest', !!nearestHarvestable());
   if (tracking) explainDiscoveries(herdAI.signs.discover(player.pos.x, player.pos.z));
   signView.update(dt, tracking, player.pos.x, player.pos.z);
+  if (lookouts.visit(player.pos.x, player.pos.z).length) hud.showToast(STRINGS.map.discovered, 4);
+
+  // Dusk: light fades, then a warning, then the hunt ends.
+  applyDaylight((elapsed - DUSK_START) / (HUNT_END - DUSK_START), scene, sun, hemi);
+  if (elapsed >= DUSK_WARN && !duskWarned) {
+    duskWarned = true;
+    hud.showToast(STRINGS.dusk, 5);
+  }
+  if (elapsed >= HUNT_END && !bulletCam && !harvestScreen.open) {
+    hud.showToast(STRINGS.duskEnd, 3);
+    endHunt();
+  }
 
   const w = windAt(elapsed, player.eye);
-  windUniforms.uTime.value = elapsed;
   windUniforms.uWind.value.set(w.x, w.z);
   const windHeading = Math.atan2(-w.x, -w.z);
   windArrow.style.transform = `rotate(${player.yaw - windHeading}rad)`;
-  windText.textContent = STRINGS.wind(Math.hypot(w.x, w.z));
-  info.textContent = `${STRINGS.altitude(player.pos.y)} · ${STRINGS.speed(player.speed)}${sessionScore ? ` · ${STRINGS.score(sessionScore)}` : ''}`;
+  windText.textContent = settings.windArrow ? STRINGS.wind(Math.hypot(w.x, w.z)) : '';
+  info.textContent = `${STRINGS.altitude(player.pos.y)}${sessionScore ? ` · ${STRINGS.score(sessionScore)}` : ''}`;
 
   rangeTimer -= dt;
   if (player.scoped && rangeTimer <= 0) {

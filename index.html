@@ -2,14 +2,17 @@
 <html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#1b1f1a" />
     <title>Sniper 狩獵</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
-  <body>
+  <body class="in-cabin">
     <div id="app">
       <canvas id="game"></canvas>
+
+      <!-- In-hunt HUD -->
       <div id="scope">
         <div id="scope-blur"></div>
         <svg id="reticle"></svg>
@@ -20,6 +23,7 @@
         <button id="btn-mag" class="btn small"></button>
       </div>
       <div id="hud">
+        <button id="btn-menu" class="btn icon-btn" aria-label="選單"></button>
         <div id="wind"><span id="wind-arrow">↑</span><span id="wind-text"></span></div>
         <div id="info"></div>
       </div>
@@ -27,9 +31,9 @@
       <div id="toast"></div>
       <div id="hint"></div>
       <div id="mode-buttons">
-        <button id="btn-scope" class="btn"></button>
-        <button id="btn-stance" class="btn"></button>
-        <button id="btn-track" class="btn explore-only"></button>
+        <button id="btn-scope" class="btn icon-btn"></button>
+        <button id="btn-stance" class="btn icon-btn"></button>
+        <button id="btn-track" class="btn icon-btn explore-only"></button>
       </div>
       <div id="zero" class="scoped-only">
         <div id="zero-label"></div>
@@ -37,7 +41,7 @@
       </div>
       <button id="btn-fire" class="btn scoped-only"></button>
       <button id="btn-harvest" class="btn"></button>
-      <div id="harvest">
+      <div id="harvest" class="panel">
         <div id="h-head">
           <div id="h-grade"></div>
           <div><div id="h-title"></div><div id="h-verdict"></div></div>
@@ -46,9 +50,67 @@
         <div id="h-facts"></div>
         <div id="h-total-row"><span id="h-record"></span><span id="h-total"></span></div>
         <canvas id="xray"></canvas>
-        <div id="h-buttons"><button id="btn-xray" class="btn"></button><button id="btn-continue" class="btn"></button></div>
+        <div class="row"><button id="btn-xray" class="btn"></button><button id="btn-continue" class="btn"></button></div>
       </div>
       <div id="joystick"><div id="joystick-knob"></div></div>
+
+      <!-- Screens -->
+      <div id="cabin" class="screen">
+        <div class="cabin-title">
+          <div class="cabin-name"></div>
+          <div class="cabin-sub"></div>
+        </div>
+        <div class="cabin-best"></div>
+        <div class="stack">
+          <button id="btn-start" class="btn big primary"></button>
+          <button id="btn-records" class="btn big"></button>
+          <button id="btn-settings" class="btn big"></button>
+          <button id="btn-shop" class="btn big" disabled></button>
+        </div>
+      </div>
+      <div id="menu" class="screen dim">
+        <div class="panel">
+          <div class="panel-title" id="menu-title"></div>
+          <div id="menu-clock" class="muted"></div>
+          <div class="stack">
+            <button id="btn-resume" class="btn big primary"></button>
+            <button id="btn-map" class="btn big"></button>
+            <button id="btn-menu-settings" class="btn big"></button>
+            <button id="btn-quit" class="btn big"></button>
+          </div>
+        </div>
+      </div>
+      <div id="map" class="screen dim">
+        <div class="panel">
+          <div class="panel-title" id="map-title"></div>
+          <canvas id="map-canvas"></canvas>
+          <div id="map-hint" class="muted"></div>
+          <button id="btn-map-close" class="btn big"></button>
+        </div>
+      </div>
+      <div id="settings" class="screen dim">
+        <div class="panel">
+          <div class="panel-title" id="settings-title"></div>
+          <div id="settings-list"></div>
+          <button id="btn-settings-close" class="btn big"></button>
+        </div>
+      </div>
+      <div id="records" class="screen dim">
+        <div class="panel">
+          <div class="panel-title" id="records-title"></div>
+          <div id="records-best"></div>
+          <ul id="records-log"></ul>
+          <button id="btn-records-close" class="btn big"></button>
+        </div>
+      </div>
+      <div id="summary" class="screen dim">
+        <div class="panel">
+          <div class="panel-title" id="summary-title"></div>
+          <ul id="summary-list"></ul>
+          <div id="summary-total-row"><span id="summary-record"></span><span id="summary-total"></span></div>
+          <button id="btn-summary-close" class="btn big primary"></button>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

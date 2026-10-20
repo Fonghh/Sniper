@@ -4,6 +4,7 @@ import { ZERO_STEPS } from '../game/rifle';
 export const SCOPE_CENTER_Y = 0.45; // fraction of play-area height
 const SCOPE_RADIUS = 0.48; // fraction of play-area width
 import { STRINGS } from '../i18n';
+import { ICONS } from './icons';
 import type { Actions } from '../input/input';
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -47,9 +48,9 @@ export class Hud {
   private lastReticleKey = '';
 
   constructor(private actions: Actions) {
-    this.scopeBtn.textContent = STRINGS.scopeOn;
-    this.trackBtn.textContent = STRINGS.track;
-    this.trackBtn.disabled = false;
+    this.scopeBtn.innerHTML = ICONS.scope;
+    this.trackBtn.innerHTML = ICONS.track;
+    this.trackBtn.setAttribute('aria-label', STRINGS.track);
     this.fireBtn.textContent = STRINGS.fire;
     const tap = (el: HTMLElement, fn: () => void) =>
       el.addEventListener('pointerdown', (e) => {
@@ -129,9 +130,17 @@ export class Hud {
 
   update(dt: number, s: HudState, fovDeg: number, viewHeightPx: number) {
     document.body.classList.toggle('scoped', s.scoped);
-    this.scopeBtn.textContent = s.scoped ? STRINGS.scopeOff : STRINGS.scopeOn;
-    this.stanceBtn.textContent = s.prone ? STRINGS.stand : STRINGS.prone;
-    this.trackBtn.textContent = s.tracking ? STRINGS.tracking : STRINGS.track;
+    // Icons show the action each button performs.
+    if (this.scopeBtn.dataset.state !== String(s.scoped)) {
+      this.scopeBtn.dataset.state = String(s.scoped);
+      this.scopeBtn.innerHTML = s.scoped ? ICONS.close : ICONS.scope;
+      this.scopeBtn.setAttribute('aria-label', s.scoped ? STRINGS.scopeOff : STRINGS.scopeOn);
+    }
+    if (this.stanceBtn.dataset.state !== String(s.prone)) {
+      this.stanceBtn.dataset.state = String(s.prone);
+      this.stanceBtn.innerHTML = s.prone ? ICONS.stand : ICONS.prone;
+      this.stanceBtn.setAttribute('aria-label', s.prone ? STRINGS.stand : STRINGS.prone);
+    }
     this.trackBtn.classList.toggle('active', s.tracking);
     document.body.classList.toggle('tracking', s.tracking);
 

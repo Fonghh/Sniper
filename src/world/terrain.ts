@@ -4,6 +4,15 @@ export const MAP_SIZE = 1000; // m, square map centred on the origin
 export const HALF_MAP = MAP_SIZE / 2;
 export const WATER_LEVEL = 1.5;
 
+export interface SpawnPoint {
+  x: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  /** The meadow the opening herd grazes on. */
+  target: { x: number; z: number };
+}
+
 /**
  * Procedural heightfield shaped for portrait-mode hunting: a meandering river valley
  * through the middle, ridges on both flanks and broken slopes in between, giving
@@ -70,18 +79,20 @@ export class Terrain {
   }
 
   /**
-   * A spawn point high on a flank with a clear view down to the valley floor 200–350 m away,
-   * where the opening herd will graze. Yaw/pitch (Three.js convention: yaw 0 looks toward -z)
-   * aim the camera at that spot.
+   * Good opening positions: high on a flank with a clear view down to a valley meadow
+   * 200–350 m away, where the herd will graze. Sorted best first and spread at least
+   * `spacing` metres apart so each hunt can start somewhere different.
+   * Yaw/pitch (Three.js convention: yaw 0 looks toward -z) aim the camera at the meadow.
    */
-  spawnPoint(): { x: number; z: number; yaw: number; pitch: number; target: { x: number; z: number } } {
-    let best: { score: number; x: number; z: number; tx: number; tz: number } | null = null;
+  spawnPoints(count: number, spacing = 150): SpawnPoint[] {
+    const candidates: Array<{ score: number; x: number; z: number; tx: number; tz: number }> = [];
     for (const side of [1, -1]) {
       for (let z = -320; z <= 320; z += 40) {
         for (let dx = 150; dx <= 330; dx += 30) {
           const x = this.riverX(z) + side * dx;
           if (Math.abs(x) > HALF_MAP - 90) continue;
           const eye = this.height(x, z) + 1.65;
+          let best: { score: number; x: number; z: number; tx: number; tz: number } | null = null;
           for (const tzOff of [-200, -120, 0, 120, 200]) {
             const tz = z + tzOff;
             if (Math.abs(tz) > HALF_MAP - 90) continue;
@@ -97,20 +108,61 @@ export class Terrain {
             const score = Math.min(drop, 140) - Math.abs(range - 270) * 0.3;
             if (!best || score > best.score) best = { score, x, z, tx, tz };
           }
+          if (best) candidates.push(best);
         }
       }
     }
-    if (!best) {
+    candidates.sort((a, b) => b.score - a.score);
+    const picked: typeof candidates = [];
+    for (const c of candidates) {
+      if (picked.length >= count) break;
+      if (picked.every((p) => Math.hypot(p.x - c.x, p.z - c.z) >= spacing)) picked.push(c);
+    }
+    if (!picked.length) {
       const z = 0;
       const x = this.riverX(z) + 250;
-      best = { score: 0, x, z, tx: this.riverX(z - 250), tz: z - 250 };
+      picked.push({ score: 0, x, z, tx: this.riverX(z - 250), tz: z - 250 });
     }
-    const { x, z, tx, tz } = best;
-    const dy = this.height(tx, tz) + 1 - (this.height(x, z) + 1.65);
-    const flat = Math.hypot(tx - x, tz - z);
-    const yaw = Math.atan2(-(tx - x), -(tz - z));
-    // Put the target a little below screen centre so more of the valley is in view.
-    const pitch = Math.atan2(dy, flat) + 0.12;
-    return { x, z, yaw, pitch, target: { x: tx, z: tz } };
+    return picked.map(({ x, z, tx, tz }) => {
+      const dy = this.height(tx, tz) + 1 - (this.height(x, z) + 1.65);
+      const flat = Math.hypot(tx - x, tz - z);
+      const yaw = Math.atan2(-(tx - x), -(tz - z));
+      // Put the target a little below screen centre so more of the valley is in view.
+      const pitch = Math.atan2(dy, flat) + 0.12;
+      return { x, z, yaw, pitch, target: { x: tx, z: tz } };
+    });
+  }
+
+  /** The single best opening position. */
+  spawnPoint(): SpawnPoint {
+    return this.spawnPoints(1)[0];
+  }
+
+  /**
+   * Lookout points: local high spots that overlook the valley, spread across the map.
+   * Visiting one unlocks fast travel to it.
+   */
+  lookouts(count: number, spacing = 220): Array<{ x: number; z: number }> {
+    const limit = HALF_MAP - 90;
+    const candidates: Array<{ x: number; z: number; h: number }> = [];
+    for (let x = -limit; x <= limit; x += 20) {
+      for (let z = -limit; z <= limit; z += 20) {
+        const h = this.height(x, z);
+        // A local peak: higher than everything 30 m around, and not too steep to stand on.
+        let peak = true;
+        for (let a = 0; a < 8 && peak; a++) {
+          const ang = (a / 8) * Math.PI * 2;
+          if (this.height(x + Math.cos(ang) * 30, z + Math.sin(ang) * 30) > h) peak = false;
+        }
+        if (peak && this.slope(x, z) < 0.6) candidates.push({ x, z, h });
+      }
+    }
+    candidates.sort((a, b) => b.h - a.h);
+    const out: Array<{ x: number; z: number }> = [];
+    for (const c of candidates) {
+      if (out.length >= count) break;
+      if (out.every((o) => Math.hypot(o.x - c.x, o.z - c.z) >= spacing)) out.push({ x: c.x, z: c.z });
+    }
+    return out;
   }
 }

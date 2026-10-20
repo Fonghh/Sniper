@@ -116,6 +116,17 @@ export class BulletSystem {
     };
   }
 
+  /** Removes every bullet, tracer and puff (end of a hunt). */
+  clear() {
+    for (const b of this.bullets) {
+      this.scene.remove(b.line, b.mesh);
+      b.line.geometry.dispose();
+    }
+    for (const p of this.puffs) this.scene.remove(p.mesh);
+    this.bullets = [];
+    this.puffs = [];
+  }
+
   update(dt: number, worldTime: number) {
     this.now = worldTime;
     const env = this.env(worldTime);

@@ -2,20 +2,32 @@
 
 const KEY = 'sniper.records.v1';
 
+/** One harvested animal, for the kill log in the cabin. */
+export interface HarvestEntry {
+  at: string; // ISO date
+  buck: boolean;
+  grade: string;
+  score: number;
+  range: number;
+  category: string;
+}
+
 export interface Records {
   bestAnimal: number | null;
   bestSession: number | null;
   harvests: number;
+  log: HarvestEntry[]; // newest first
 }
 
-const EMPTY: Records = { bestAnimal: null, bestSession: null, harvests: 0 };
+const LOG_LIMIT = 50;
+const EMPTY: Records = { bestAnimal: null, bestSession: null, harvests: 0, log: [] };
 
 export function loadRecords(): Records {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? { ...EMPTY, ...JSON.parse(raw) } : { ...EMPTY };
+    return raw ? { ...EMPTY, ...JSON.parse(raw) } : { ...EMPTY, log: [] };
   } catch {
-    return { ...EMPTY };
+    return { ...EMPTY, log: [] };
   }
 }
 
@@ -27,12 +39,13 @@ function save(r: Records) {
   }
 }
 
-/** Records a harvested animal's score; returns true if it is a new personal best. */
-export function recordHarvest(score: number): boolean {
+/** Records a harvested animal; returns true if its score is a new personal best. */
+export function recordHarvest(entry: HarvestEntry): boolean {
   const r = loadRecords();
   r.harvests += 1;
-  const best = r.bestAnimal === null || score > r.bestAnimal;
-  if (best) r.bestAnimal = score;
+  r.log = [entry, ...r.log].slice(0, LOG_LIMIT);
+  const best = r.bestAnimal === null || entry.score > r.bestAnimal;
+  if (best) r.bestAnimal = entry.score;
   save(r);
   return best;
 }

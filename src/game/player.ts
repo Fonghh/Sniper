@@ -17,13 +17,22 @@ export class Player {
   rested = false;
   running = false;
   speed = 0;
-  readonly stability = new Stability();
+  stability = new Stability();
   private eyeHeight: number = PLAYER.eyeHeightStand;
 
   constructor(
     private terrain: Terrain,
     private rests: RestPoint[],
   ) {}
+
+  /** Fresh state for a new hunt: standing, scope down, rested heart and breath. */
+  reset() {
+    this.stance = 'stand';
+    this.scoped = false;
+    this.speed = 0;
+    this.stability = new Stability();
+    this.eyeHeight = PLAYER.eyeHeightStand;
+  }
 
   spawn(x: number, z: number, yaw: number, pitch: number) {
     this.pos.set(x, this.terrain.height(x, z), z);
