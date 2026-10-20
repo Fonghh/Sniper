@@ -1,8 +1,11 @@
+/* A deliberately single, dark look: the game frame sits on a dark ground in every theme. */
+:root { color-scheme: dark; }
 html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
   background: #1b1f1a;
+  color: #eef2e6;
   font-family: system-ui, 'Noto Sans TC', sans-serif;
   touch-action: none;
   user-select: none;
@@ -11,9 +14,8 @@ html, body {
 /* Portrait 9:16 play area: fills a phone, letterboxed on desktop. */
 #app {
   position: relative;
-  height: 100vh;
-  height: 100dvh;
-  width: min(100vw, calc(100dvh * 9 / 16));
+  height: 100%;
+  width: min(100%, calc(100dvh * 9 / 16));
   margin: 0 auto;
   overflow: hidden;
 }
