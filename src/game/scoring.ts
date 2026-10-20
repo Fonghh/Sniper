@@ -37,6 +37,7 @@ export const PLACEMENT: Record<HitCategory, number> = {
   heart: 100,
   lungs: 100,
   cns: 70, // instant, but a small target with a high risk of a bad wound
+  hip: 60, // anchors a deer facing away; a fair shot, not the ideal one
   liver: 45,
   gut: 0,
   leg: 0,

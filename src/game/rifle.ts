@@ -2,7 +2,7 @@ import { AMMO, Ammo } from '../ballistics/ammo';
 import { zeroElevation } from '../ballistics/ballistics';
 
 export const ZERO_STEPS = [100, 150, 200, 250, 300, 350, 400] as const;
-export const MAGNIFICATIONS = [4, 8, 16] as const;
+export const MAGNIFICATIONS = [2, 4, 8, 16] as const; // 2x for close, moving deer
 /**
  * The wide portrait view (75° vertical) is already "zoomed out" compared with the naked eye,
  * so nominal magnification is applied relative to a narrower eye-equivalent field of view.
@@ -15,7 +15,7 @@ export const BOLT_CYCLE = 1.2; // s between shots
 export class Rifle {
   ammo: Ammo = AMMO['308-sp-165'];
   zeroIndex = 0;
-  magIndex = 0;
+  magIndex = 1; // start at 4x
   private boltTimer = 0;
   private zeroTable = new Map<string, number[]>();
 

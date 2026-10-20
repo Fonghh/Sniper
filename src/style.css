@@ -80,7 +80,12 @@ body.touch #joystick { display: block; }
 }
 .scoped-only { display: none !important; }
 body.scoped .scoped-only { display: flex !important; }
-body.scoped #btn-fire.scoped-only { display: block !important; }
+#crosshair {
+  position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border: 2px solid rgba(255, 255, 255, 0.85); border-radius: 50%; box-shadow: 0 0 2px #000; pointer-events: none;
+}
+body.scoped #crosshair, body.in-cabin #crosshair, body.bulletcam #crosshair { display: none; }
+body:not(.scoped) #btn-fire { width: 72px; height: 72px; font-size: 15px; background: rgba(170, 40, 30, 0.45); }
 body.scoped .explore-only { display: none; }
 body.scoped #hint { display: none; }
 
@@ -142,7 +147,8 @@ body.can-harvest:not(.scoped):not(.harvesting) #btn-harvest { display: block; }
   max-height: calc(100% - 40px); overflow-y: auto;
 }
 #harvest.show { display: block; }
-body.harvesting #mode-buttons, body.harvesting #joystick, body.harvesting #hint { display: none; }
+body.harvesting #mode-buttons, body.harvesting #joystick, body.harvesting #hint, body.harvesting #btn-fire,
+body.harvesting #crosshair { display: none; }
 #h-head { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
 #h-grade {
   width: 58px; height: 58px; border-radius: 50%; display: grid; place-items: center;
@@ -169,7 +175,7 @@ body.harvesting #mode-buttons, body.harvesting #joystick, body.harvesting #hint 
 /* ---- Bullet cam ---- */
 body.bulletcam #hud, body.bulletcam #mode-buttons, body.bulletcam #scope, body.bulletcam #zero,
 body.bulletcam #joystick, body.bulletcam #hint, body.bulletcam #status { display: none !important; }
-body.bulletcam.scoped #btn-fire.scoped-only, body.bulletcam.scoped #zero.scoped-only { display: none !important; }
+body.bulletcam #btn-fire, body.bulletcam.scoped #zero.scoped-only { display: none !important; }
 body.bulletcam #game { filter: contrast(1.08) saturate(1.1); }
 
 /* ---- HUD top row ---- */

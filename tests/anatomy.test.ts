@@ -40,18 +40,38 @@ describe('anatomy and wound tracing', () => {
     expect(t).toBeLessThan(60);
   });
 
-  it('liver shot takes minutes', () => {
+  it('liver shot takes around half a minute or more', () => {
     const w = shoot(vec3(0, 0.76, 0.06), BROADSIDE);
     expect(categorize(w)).toBe('liver');
     const t = Physiology.timeToCollapse([w]);
-    expect(t).toBeGreaterThan(60);
-    expect(t).toBeLessThan(400);
+    expect(t).toBeGreaterThan(25);
+    expect(t).toBeLessThan(200);
   });
 
-  it('gut shot does not bring the deer down within a hunt', () => {
+  it('gut shot takes a couple of minutes: long enough to need tracking, short enough for a hunt', () => {
     const w = shoot(vec3(0, 0.75, -0.3), BROADSIDE);
     expect(categorize(w)).toBe('gut');
-    expect(Physiology.timeToCollapse([w], 900)).toBe(Infinity);
+    const t = Physiology.timeToCollapse([w]);
+    expect(t).toBeGreaterThan(60);
+    expect(t).toBeLessThan(300);
+  });
+
+  it('a deer facing away can be anchored by breaking the pelvis', () => {
+    const w = shoot(vec3(0, 0.86, -0.6), vec3(0, 0, 1));
+    expect(ids(w)).toContain('pelvis');
+    expect(categorize(w)).toBe('hip');
+    expect(Physiology.timeToCollapse([w])).toBe(0);
+  });
+
+  it('a thigh shot through the femoral artery drops the deer within about half a minute', () => {
+    const w = shoot(vec3(0, 0.66, -0.48), BROADSIDE);
+    expect(ids(w).some((id) => id.startsWith('femoral'))).toBe(true);
+    expect(Physiology.timeToCollapse([w])).toBeLessThan(35);
+  });
+
+  it('follow-up shots stack: two body hits bring a deer down far sooner than one', () => {
+    const w = shoot(vec3(0, 0.75, -0.3), BROADSIDE);
+    expect(Physiology.timeToCollapse([w, w])).toBeLessThan(Physiology.timeToCollapse([w]) * 0.6);
   });
 
   it('brain shot is instant', () => {

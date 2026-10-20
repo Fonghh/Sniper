@@ -240,6 +240,7 @@ export class Deer {
         exitVelocity: velocity * 0.97,
         penetration: 0.03,
         channel: ammo.diameterM,
+        energy: 0.5 * ammo.massKg * velocity * velocity * (1 - 0.97 * 0.97),
         organs: [],
       };
     }

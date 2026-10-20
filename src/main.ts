@@ -235,14 +235,15 @@ const actions: Actions = {
     }
   },
   beginShot: () => {
-    if (player.scoped && phase === 'hunt') player.stability.startHold();
+    if (phase === 'hunt') player.stability.startHold();
   },
   releaseShot: (fire) => {
     if (bulletCam) {
       endBulletCam();
       return;
     }
-    if (fire && player.scoped && phase === 'hunt' && rifle.tryFire()) shoot();
+    // Firing without the scope (hip fire) is allowed for close, fast shots.
+    if (fire && phase === 'hunt' && !harvestScreen.open && rifle.tryFire()) shoot();
     player.stability.endHold();
   },
   stepZero: (d) => {
@@ -293,6 +294,7 @@ mapView.onTravel = (l) => {
 
 function applySettings() {
   windArrow.style.visibility = settings.windArrow ? 'visible' : 'hidden';
+  input.invertY = settings.invertY;
   input.setGyro(settings.gyroAim);
 }
 applySettings();
@@ -341,9 +343,16 @@ function aimDirection(): THREE.Vector3 {
   return new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
 }
 
+/** Unscoped shots wander much more: no magnified sight picture and no proper cheek weld. */
+const HIP_FIRE_SWAY = 4;
+
 function shoot() {
   const eye = player.eye;
   const d = aimDirection();
+  if (!player.scoped) {
+    const o = player.stability.offset(player.stance, player.rested);
+    d.applyEuler(new THREE.Euler(o.pitch * HIP_FIRE_SWAY, o.yaw * HIP_FIRE_SWAY, 0, 'YXZ'));
+  }
   const sight = vec3(d.x, d.y, d.z);
   const bore = boreDirection(sight, rifle.elevation);
   const muzzle = muzzleOrigin(vec3(eye.x, eye.y, eye.z), sight, SIGHT_HEIGHT);

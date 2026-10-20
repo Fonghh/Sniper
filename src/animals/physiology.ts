@@ -17,7 +17,13 @@ const BLEED: Partial<Record<OrganId, number>> = {
   lungR: 0.25,
   liver: 0.055,
   gut: 0.0015,
+  femoralL: 1.0,
+  femoralR: 1.0,
 };
+/** Bleeding (L/s) per joule left in the body: an expanding bullet's trauma bleeds wherever it lands. */
+const ENERGY_BLEED = 0.000012;
+/** Immediate blood loss (L) per joule: shock and tissue destruction, so follow-up shots stack up. */
+const ENERGY_SHOCK = 0.00012;
 const MUSCLE_BLEED = 0.002; // L/s for any wound; clots over time
 const CLOT_TAU = 90; // s
 /** Oxygen lost per second per metre of lung channel. */
@@ -25,13 +31,14 @@ const LUNG_OXYGEN = 0.12;
 
 export type Condition = 'healthy' | 'wounded' | 'down' | 'dead';
 
-export type HitCategory = 'cns' | 'heart' | 'lungs' | 'liver' | 'gut' | 'leg' | 'muscle';
+export type HitCategory = 'cns' | 'heart' | 'lungs' | 'hip' | 'liver' | 'gut' | 'leg' | 'muscle';
 
 export function categorize(w: WoundResult): HitCategory {
   const ids = new Set(w.organs.map((o) => o.organ.id));
   if (ids.has('brain') || ids.has('neckSpine') || ids.has('spine')) return 'cns';
   if (ids.has('heart') || ids.has('aorta')) return 'heart';
   if (ids.has('lungL') || ids.has('lungR')) return 'lungs';
+  if (ids.has('pelvis') || ids.has('femoralL') || ids.has('femoralR')) return 'hip';
   if (ids.has('liver')) return 'liver';
   if (ids.has('gut')) return 'gut';
   if (['legFL', 'legFR', 'legHL', 'legHR'].some((l) => ids.has(l as OrganId))) return 'leg';
@@ -60,12 +67,15 @@ export class Physiology {
         this.blood = Math.min(this.blood, BLOOD_VOLUME * (1 - COLLAPSE_LOSS));
         return;
       }
-      if (id === 'spine') this.paralysed = true;
+      // A broken spine or pelvis drops the deer where it stands.
+      if (id === 'spine' || id === 'pelvis') this.paralysed = true;
       if (id.startsWith('leg')) this.mobility *= 0.45;
       this.organBleed += (BLEED[id] ?? 0) * h.length * width;
       if (id === 'lungL' || id === 'lungR') this.oxygenLoss += LUNG_OXYGEN * h.length * width;
     }
     this.muscleBleed += MUSCLE_BLEED * width;
+    this.organBleed += ENERGY_BLEED * w.energy;
+    this.blood -= ENERGY_SHOCK * w.energy;
     if (this.condition === 'healthy') this.condition = 'wounded';
     if (this.paralysed) this.condition = 'down';
   }

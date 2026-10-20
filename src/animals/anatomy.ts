@@ -8,7 +8,8 @@ import type { Ammo } from '../ballistics/ammo';
 
 export type OrganId =
   | 'brain' | 'neckSpine' | 'spine' | 'heart' | 'lungL' | 'lungR' | 'aorta'
-  | 'liver' | 'gut' | 'legFL' | 'legFR' | 'legHL' | 'legHR';
+  | 'liver' | 'gut' | 'legFL' | 'legFR' | 'legHL' | 'legHR'
+  | 'pelvis' | 'femoralL' | 'femoralR';
 
 /** Rigid parts that can be posed; each rotates about local x at its pivot. */
 export type PartId = 'neck' | 'legFL' | 'legFR' | 'legHL' | 'legHR';
@@ -150,6 +151,10 @@ export const ORGANS: Organ[] = [
   { id: 'aorta', name: '主動脈', shapes: [C(vec3(0, 0.78, 0.32), vec3(0, 0.96, 0.05), 0.022)], bone: false },
   { id: 'liver', name: '肝臟', shapes: [E(vec3(-0.02, 0.78, 0.06), vec3(0.13, 0.12, 0.09))], bone: false },
   { id: 'gut', name: '胃腸', shapes: [E(vec3(0, 0.8, -0.27), vec3(0.16, 0.17, 0.28))], bone: false },
+  // Hindquarters: breaking the pelvis anchors the deer; the femoral arteries bleed fast.
+  { id: 'pelvis', name: '骨盆', shapes: [E(vec3(0, 0.86, -0.5), vec3(0.13, 0.08, 0.1))], bone: true },
+  { id: 'femoralL', name: '左股動脈', shapes: [C(vec3(0.1, 0.74, -0.46), vec3(0.1, 0.52, -0.47), 0.022, 0.02, 'legHL')], bone: false },
+  { id: 'femoralR', name: '右股動脈', shapes: [C(vec3(-0.1, 0.74, -0.46), vec3(-0.1, 0.52, -0.47), 0.022, 0.02, 'legHR')], bone: false },
   { id: 'legFL', name: '左前腿骨', shapes: frontLegBone('legFL', 0.11), bone: true },
   { id: 'legFR', name: '右前腿骨', shapes: frontLegBone('legFR', -0.11), bone: true },
   { id: 'legHL', name: '左後腿骨', shapes: hindLegBone('legHL', 0.11), bone: true },
@@ -262,6 +267,8 @@ export interface WoundResult {
   penetration: number; // m of body travelled
   /** Wound channel diameter in metres; scales bleeding. */
   channel: number;
+  /** Kinetic energy (J) the bullet left in the body: tissue trauma that bleeds wherever it hits. */
+  energy: number;
   organs: OrganHit[];
 }
 
@@ -271,7 +278,8 @@ export interface WoundResult {
  * and bone consume energy, so a bullet may stop before reaching deeper organs.
  */
 export function traceWound(ammo: Ammo, entry: Vec3, dir: Vec3, velocity: number, pose: Pose = REST_POSE): WoundResult {
-  let energy = 0.5 * ammo.massKg * velocity * velocity;
+  const impactEnergy = 0.5 * ammo.massKg * velocity * velocity;
+  let energy = impactEnergy;
   const expansion =
     ammo.type === 'softPoint' ? Math.min(1, Math.max(0, (velocity - 350) / (EXPANSION_VELOCITY - 350))) : 0;
   // Expanded soft points open to ~2.2× calibre and dump energy faster; FMJ stays narrow.
@@ -309,11 +317,11 @@ export function traceWound(ammo: Ammo, entry: Vec3, dir: Vec3, velocity: number,
       }
     }
     if (energy <= 0) {
-      return { entry, dir, exit: null, exitVelocity: 0, penetration: travelled, channel, organs: toHits(lengths) };
+      return { entry, dir, exit: null, exitVelocity: 0, penetration: travelled, channel, energy: impactEnergy, organs: toHits(lengths) };
     }
   }
   const exitVelocity = Math.sqrt((2 * energy) / ammo.massKg);
-  return { entry, dir, exit: lastInside, exitVelocity, penetration: travelled, channel, organs: toHits(lengths) };
+  return { entry, dir, exit: lastInside, exitVelocity, penetration: travelled, channel, energy: impactEnergy - energy, organs: toHits(lengths) };
 }
 
 function toHits(lengths: Map<OrganId, number>): OrganHit[] {

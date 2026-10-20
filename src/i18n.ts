@@ -1,8 +1,8 @@
 // All user-facing strings live here so another language can be added later.
 export const STRINGS = {
   title: 'Sniper 狩獵',
-  hintDesktop: '點擊開始 · WASD 移動 · Shift 跑 · 右鍵開鏡 · 左鍵按住閉氣放開開火 · C 趴下 · 滾輪歸零 · Z 倍率',
-  hintTouch: '左手搖桿移動（推到底奔跑）· 右手拖曳看四周',
+  hintDesktop: '點擊開始 · WASD 移動（開鏡時微調瞄準）· Shift 跑 · 右鍵開鏡 · 左鍵按住閉氣放開開火 · C 趴下 · 滾輪歸零 · Z 倍率',
+  hintTouch: '左手移動（開鏡時微調瞄準）· 右手拖曳看四周',
   speed: (v: number) => `速度 ${v.toFixed(1)} m/s`,
   altitude: (h: number) => `海拔 ${h.toFixed(0)} m`,
   wind: (v: number) => `${v.toFixed(1)} m/s`,
@@ -54,6 +54,7 @@ export const STRINGS = {
     cns: '中樞神經（腦、脊椎）',
     heart: '心臟／大血管',
     lungs: '肺',
+    hip: '臀部（骨盆、股動脈）',
     liver: '肝臟',
     gut: '胃腸',
     leg: '腿',
@@ -98,6 +99,7 @@ export const STRINGS = {
     windArrow: ['風向箭頭', '關閉後只能看草木判斷風'],
     gyroAim: ['陀螺儀瞄準', '傾斜手機微調準星（開鏡時）'],
     haptics: ['震動回饋', '開火、歸零切換時震動'],
+    invertY: ['反轉上下', '手指往下拖時往上看'],
   } as Record<string, string | [string, string]>,
   records: {
     title: '擊殺紀錄',

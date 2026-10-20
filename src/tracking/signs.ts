@@ -24,7 +24,7 @@ export interface Sign {
   discovered: boolean;
 }
 
-const SEVERITY: HitCategory[] = ['cns', 'heart', 'lungs', 'liver', 'gut', 'leg', 'muscle'];
+const SEVERITY: HitCategory[] = ['cns', 'heart', 'lungs', 'hip', 'liver', 'gut', 'leg', 'muscle'];
 
 /** The most serious of several wounds decides the trail's character. */
 export function worstCategory(categories: HitCategory[]): HitCategory | null {
@@ -38,6 +38,7 @@ export function bloodTypeFor(category: HitCategory): BloodType | null {
     case 'cns':
       return null; // drops on the spot
     case 'heart':
+    case 'hip': // femoral arteries
       return 'bright';
     case 'lungs':
       return 'frothy';

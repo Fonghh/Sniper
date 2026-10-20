@@ -7,9 +7,10 @@ export interface Settings {
   windArrow: boolean;
   gyroAim: boolean;
   haptics: boolean;
+  invertY: boolean;
 }
 
-export const DEFAULT_SETTINGS: Settings = { bulletCam: true, windArrow: true, gyroAim: false, haptics: true };
+export const DEFAULT_SETTINGS: Settings = { bulletCam: true, windArrow: true, gyroAim: false, haptics: true, invertY: false };
 
 export function loadSettings(): Settings {
   try {

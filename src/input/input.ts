@@ -42,6 +42,8 @@ export class Input {
   private lookStart = { x: 0, y: 0, t: 0 };
   private mouseShot = false;
   private gyro = false;
+  /** Drag down to look up (some players prefer it); applies to touch drag and mouse. */
+  invertY = false;
   private lastOrientation: { beta: number; gamma: number } | null = null;
   readonly isTouch: boolean;
 
@@ -63,7 +65,7 @@ export class Input {
     addEventListener('mousemove', (e) => {
       if (document.pointerLockElement !== canvas) return;
       this.yaw -= e.movementX * LOOK.mouseSensitivity * LOOK.horizontalBoost;
-      this.pitch -= e.movementY * LOOK.mouseSensitivity;
+      this.pitch -= e.movementY * LOOK.mouseSensitivity * (this.invertY ? -1 : 1);
     });
     addEventListener('wheel', (e) => {
       if (document.pointerLockElement === canvas) actions.stepZero(e.deltaY < 0 ? 1 : -1);
@@ -119,7 +121,7 @@ export class Input {
       return;
     }
     if (e.button === 2) this.actions.toggleScope();
-    if (e.button === 0 && this.actions.isScoped()) {
+    if (e.button === 0) {
       this.mouseShot = true;
       this.actions.beginShot();
     }
@@ -158,7 +160,7 @@ export class Input {
       this.knob.style.transform = `translate(${dx}px, ${dy}px)`;
     } else if (e.pointerId === this.lookPointer) {
       this.yaw -= (e.clientX - this.lookLast.x) * LOOK.touchSensitivity * LOOK.horizontalBoost;
-      this.pitch -= (e.clientY - this.lookLast.y) * LOOK.touchSensitivity;
+      this.pitch -= (e.clientY - this.lookLast.y) * LOOK.touchSensitivity * (this.invertY ? -1 : 1);
       this.lookLast = { x: e.clientX, y: e.clientY };
     }
   }

@@ -15,4 +15,8 @@ export const LOOK = {
   horizontalBoost: 1.3,
   maxPitch: Math.PI / 2 - 0.05,
   verticalFov: 75, // degrees; ≈40° horizontal at 9:16
+  // Scoped drag slows as zoom^-0.7 rather than 1/zoom, so a moving deer can still be followed.
+  scopedLookExponent: 0.7,
+  // While scoped the left stick aims instead of walking (the right thumb is on the fire button).
+  stickAimRate: 1.6, // rad/s at full deflection, before zoom scaling
 } as const;
