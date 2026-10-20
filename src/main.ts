@@ -318,6 +318,9 @@ function onImpact(impact: Impact) {
       hud.showToast(`${head}\n${STRINGS.flight(impact.range, impact.time)}`, 4);
       break;
     }
+    case 'antler':
+      hud.showToast(`${STRINGS.hitAntler}\n${STRINGS.flight(impact.range, impact.time)}`, 4);
+      break;
     case 'target': {
       const { hit } = impact;
       const head = hit.inBull ? STRINGS.hitBull : STRINGS.hitBoard;

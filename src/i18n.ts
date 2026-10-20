@@ -28,6 +28,7 @@ export const STRINGS = {
   hitGround: '落在地面',
   miss: '未命中',
   hitAnimalPlain: '命中！',
+  hitAntler: '子彈擦過鹿角，偏飛了！',
   // Debug-only organ readout (enable with __sniper.setDebugHits(true)).
   hitAnimal: (organs: string[], passThrough: boolean) =>
     `命中：${organs.length ? organs.join('、') : '肌肉'}${passThrough ? ' · 貫穿' : ' · 留在體內'}`,

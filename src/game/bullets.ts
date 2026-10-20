@@ -11,6 +11,7 @@ const TRAIL_LIFE = 1.6; // s the tracer stays visible after impact
 
 export type Impact =
   | { kind: 'animal'; deer: Deer; hit: DeerHit; range: number; time: number }
+  | { kind: 'antler'; deer: Deer; range: number; time: number }
   | { kind: 'target'; hit: TargetHit; range: number; time: number; velocity: number }
   | { kind: 'ground'; point: THREE.Vector3; range: number; time: number }
   | { kind: 'lost' };
@@ -183,6 +184,18 @@ export class BulletSystem {
       if (b.passed.has(deer)) continue;
       const res = deer.testHit(a, c, b.ammo, length(s.vel), this.now, b.origin);
       if (!res) continue;
+      if ('antler' in res) {
+        // Glance off the antler: a few degrees off line and some speed lost.
+        b.passed.add(deer);
+        b.trail.push(res.antler.clone());
+        this.onImpact({ kind: 'antler', deer, range: res.antler.distanceTo(b.origin), time: next.time });
+        const v = toV3(next.vel);
+        const speed = v.length() * 0.85;
+        const axis = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).cross(v).normalize();
+        const dir = v.normalize().applyAxisAngle(axis, ((2 + Math.random() * 4) * Math.PI) / 180);
+        const from = res.antler.clone().addScaledVector(dir, 0.03);
+        return { pos: vec3(from.x, from.y, from.z), vel: vec3(dir.x * speed, dir.y * speed, dir.z * speed), time: next.time };
+      }
       const { hit } = res;
       b.passed.add(deer);
       b.trail.push(hit.entryWorld.clone());

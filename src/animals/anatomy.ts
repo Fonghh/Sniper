@@ -119,6 +119,9 @@ export const HULL: Shape[] = [
   E(vec3(0, 1.4, 0.79), vec3(0.068, 0.075, 0.075), 'neck'), // throat latch: joins neck to head
   E(vec3(0, 1.46, 0.85), vec3(0.085, 0.09, 0.105), 'neck'), // skull
   C(vec3(0, 1.44, 0.9), vec3(0, 1.39, 1.02), 0.065, 0.038, 'neck'), // muzzle
+  // Eyes sit proud of the skull; players aim at them, so a hit there carries on into the head.
+  E(vec3(0.066, 1.475, 0.89), vec3(0.012, 0.033, 0.036), 'neck'),
+  E(vec3(-0.066, 1.475, 0.89), vec3(0.012, 0.033, 0.036), 'neck'),
   ...frontLegHull('legFL', 0.11),
   ...frontLegHull('legFR', -0.11),
   ...hindLegHull('legHL', 0.11),
@@ -153,8 +156,48 @@ export const ORGANS: Organ[] = [
   { id: 'legHR', name: '右後腿骨', shapes: hindLegBone('legHR', -0.11), bone: true },
 ];
 
+/**
+ * Thin parts outside the body: a bullet grazing an ear or the tail leaves a minor wound;
+ * one striking an antler is deflected without harming the deer.
+ */
+export type GrazeKind = 'ear' | 'tail' | 'antler';
+
+function antlerShapes(): Shape[] {
+  const out: Shape[] = [];
+  for (const s of [1, -1]) {
+    const pts = [vec3(s * 0.04, 1.53, 0.8), vec3(s * 0.13, 1.62, 0.76), vec3(s * 0.2, 1.7, 0.8), vec3(s * 0.19, 1.74, 0.92), vec3(s * 0.13, 1.74, 1.0)];
+    for (let i = 0; i < pts.length - 1; i++) out.push(C(pts[i], pts[i + 1], 0.022, 0.018, 'neck'));
+    out.push(C(pts[1], vec3(s * 0.12, 1.75, 0.79), 0.014, 0.01, 'neck'));
+    out.push(C(pts[2], vec3(s * 0.19, 1.84, 0.84), 0.014, 0.01, 'neck'));
+    out.push(C(pts[3], vec3(s * 0.17, 1.84, 0.95), 0.013, 0.009, 'neck'));
+  }
+  return out;
+}
+
+export const GRAZE: ReadonlyArray<{ kind: GrazeKind; shape: Shape; buckOnly?: boolean }> = [
+  { kind: 'ear', shape: E(vec3(0.126, 1.596, 0.8), vec3(0.03, 0.075, 0.06), 'neck') },
+  { kind: 'ear', shape: E(vec3(-0.126, 1.596, 0.8), vec3(0.03, 0.075, 0.06), 'neck') },
+  { kind: 'tail', shape: E(vec3(0, 0.93, -0.67), vec3(0.05, 0.08, 0.035)) },
+  ...antlerShapes().map((shape) => ({ kind: 'antler' as const, shape, buckOnly: true })),
+];
+
+/** First thin part the segment touches (when it misses the body), with the fraction along it. */
+export function findGraze(a: Vec3, b: Vec3, pose: Pose, buck: boolean): { kind: GrazeKind; fraction: number } | null {
+  if (missesBounds(a, b)) return null;
+  const ab = sub(b, a);
+  const steps = Math.ceil(Math.sqrt(dot(ab, ab)) / 0.01);
+  for (let i = 0; i <= steps; i++) {
+    const p = add(a, scale(ab, i / steps));
+    for (const g of GRAZE) {
+      if (g.buckOnly && !buck) continue;
+      if (contains(g.shape, p, pose)) return { kind: g.kind, fraction: i / steps };
+    }
+  }
+  return null;
+}
+
 /** Bounding sphere of the whole animal for cheap rejection. */
-export const BOUNDS = { c: vec3(0, 0.8, 0.1), r: 1.25 };
+export const BOUNDS = { c: vec3(0, 0.85, 0.1), r: 1.35 }; // includes antlers
 
 /** Maps a body-frame point into a part's rest frame for the given pose. */
 function unpose(p: Vec3, part: PartId, pose: Pose): Vec3 {
@@ -281,13 +324,19 @@ function toHits(lengths: Map<OrganId, number>): OrganHit[] {
  * Finds where a segment (local frame) first enters the body, or null.
  * Returns the fraction along the segment.
  */
+/** True if the segment cannot touch the animal at all. */
+function missesBounds(a: Vec3, b: Vec3): boolean {
+  const ab = sub(b, a);
+  const len2 = dot(ab, ab);
+  const t = Math.max(0, Math.min(1, dot(sub(BOUNDS.c, a), ab) / len2));
+  const closest = sub(add(a, scale(ab, t)), BOUNDS.c);
+  return dot(closest, closest) > BOUNDS.r * BOUNDS.r;
+}
+
 export function findEntry(a: Vec3, b: Vec3, pose: Pose = REST_POSE): number | null {
+  if (missesBounds(a, b)) return null;
   const ab = sub(b, a);
   const len = Math.sqrt(dot(ab, ab));
-  // Reject segments that miss the bounding sphere.
-  const t = Math.max(0, Math.min(1, dot(sub(BOUNDS.c, a), ab) / (len * len)));
-  const closest = sub(add(a, scale(ab, t)), BOUNDS.c);
-  if (dot(closest, closest) > BOUNDS.r * BOUNDS.r) return null;
   const steps = Math.ceil(len / 0.01);
   for (let i = 0; i <= steps; i++) {
     const f = i / steps;

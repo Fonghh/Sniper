@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Ammo } from '../ballistics/ammo';
 import { vec3 } from '../core/vec3';
-import { Pose, WoundResult, findEntry, traceWound } from './anatomy';
+import { Pose, WoundResult, findEntry, findGraze, traceWound } from './anatomy';
 import { BodyState, DeerBrain, World } from './brain';
 import { createDeerModel, DeerModel } from './deerModel';
 import type { PlayerSignal } from './perception';
@@ -190,7 +190,9 @@ export class Deer {
     this.inv.copy(this.model.root.matrixWorld).invert();
     const la = a.clone().applyMatrix4(this.inv);
     const lb = b.clone().applyMatrix4(this.inv);
-    return findEntry(vec3(la.x, la.y, la.z), vec3(lb.x, lb.y, lb.z), this.pose) !== null;
+    const A = vec3(la.x, la.y, la.z);
+    const B = vec3(lb.x, lb.y, lb.z);
+    return findEntry(A, B, this.pose) !== null || findGraze(A, B, this.pose, this.buck) !== null;
   }
 
   /**
@@ -204,16 +206,44 @@ export class Deer {
     velocity: number,
     time: number,
     origin: THREE.Vector3,
-  ): { hit: DeerHit; fraction: number } | null {
+  ): { hit: DeerHit; fraction: number } | { antler: THREE.Vector3; fraction: number } | null {
     if (!this.hittable) return null;
     this.inv.copy(this.model.root.matrixWorld).invert();
     const la = a.clone().applyMatrix4(this.inv);
     const lb = b.clone().applyMatrix4(this.inv);
-    const f = findEntry(vec3(la.x, la.y, la.z), vec3(lb.x, lb.y, lb.z), this.pose);
-    if (f === null) return null;
-    const entry = la.clone().lerp(lb, f);
+    const A = vec3(la.x, la.y, la.z);
+    const B = vec3(lb.x, lb.y, lb.z);
     const dir = lb.clone().sub(la).normalize();
-    const wound = traceWound(ammo, vec3(entry.x, entry.y, entry.z), vec3(dir.x, dir.y, dir.z), velocity, this.pose);
+    let f = findEntry(A, B, this.pose);
+    let wound: WoundResult;
+    if (f !== null) {
+      const entry = la.clone().lerp(lb, f);
+      wound = traceWound(ammo, vec3(entry.x, entry.y, entry.z), vec3(dir.x, dir.y, dir.z), velocity, this.pose);
+    } else {
+      const graze = findGraze(A, B, this.pose, this.buck);
+      if (!graze) return null;
+      f = graze.fraction;
+      const at = la.clone().lerp(lb, f);
+      if (graze.kind === 'antler') {
+        // Antler: the bullet glances off; the deer is unharmed but bolts.
+        const world = at.applyMatrix4(this.model.root.matrixWorld);
+        const back = new THREE.Vector3().copy(a).sub(b).normalize().multiplyScalar(50).add(world);
+        this.scare({ x: back.x, z: back.z });
+        return { antler: world, fraction: f };
+      }
+      // Ear or tail: a shallow graze through thin tissue, no organs.
+      const out = at.clone().addScaledVector(dir, 0.03);
+      wound = {
+        entry: vec3(at.x, at.y, at.z),
+        dir: vec3(dir.x, dir.y, dir.z),
+        exit: vec3(out.x, out.y, out.z),
+        exitVelocity: velocity * 0.97,
+        penetration: 0.03,
+        channel: ammo.diameterM,
+        organs: [],
+      };
+    }
+    const entry = new THREE.Vector3(wound.entry.x, wound.entry.y, wound.entry.z);
     const toWorld = (v: { x: number; y: number; z: number }) =>
       new THREE.Vector3(v.x, v.y, v.z).applyMatrix4(this.model.root.matrixWorld);
     const entryWorld = toWorld(entry);
