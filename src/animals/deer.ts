@@ -28,6 +28,8 @@ export class Deer {
   private fall = 0; // 0..1 fall animation progress
   private groundY: number;
   private lastCondition: Condition = 'healthy';
+  private earTimer = 0;
+  private alarm = 0; // seconds of raised white tail after a startle
   private inv = new THREE.Matrix4();
 
   constructor(
@@ -89,13 +91,33 @@ export class Deer {
     const target = this.grazing ? GRAZE_PITCH : ALERT_PITCH;
     this.pose.neckPitch += (target - this.pose.neckPitch) * Math.min(1, dt * 2.5);
     this.model.neck.rotation.x = this.pose.neckPitch;
+    this.animateDetails(dt);
     this.model.root.updateMatrixWorld();
   }
 
-  /** Startles to attention (P5 will add fleeing). */
+  /** Ear twitches and tail: small motions that make the animal feel alive. */
+  private animateDetails(dt: number) {
+    this.earTimer -= dt;
+    if (this.earTimer <= 0) {
+      this.earTimer = 1.5 + this.rand() * 4;
+      const ear = this.model.ears[Math.floor(this.rand() * this.model.ears.length)];
+      ear.userData.twitch = 0.25;
+    }
+    for (const ear of this.model.ears) {
+      const t = (ear.userData.twitch as number | undefined) ?? 0;
+      ear.userData.twitch = Math.max(0, t - dt);
+      ear.rotation.x = t > 0 ? Math.sin(t * 40) * 0.35 : 0;
+    }
+    this.alarm = Math.max(0, this.alarm - dt);
+    const flag = this.alarm > 0 ? -1.9 : -0.5 + Math.sin(performance.now() * 0.004 + this.id) * 0.08;
+    this.model.tail.rotation.x += (flag - this.model.tail.rotation.x) * Math.min(1, dt * 8);
+  }
+
+  /** Startles to attention and flags the white tail (P5 will add fleeing). */
   alert() {
     this.grazing = false;
     this.grazeTimer = 3 + this.rand() * 3;
+    this.alarm = 4;
   }
 
   /**
