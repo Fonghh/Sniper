@@ -1,0 +1,26 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #9fc3d8;
+  font-family: system-ui, 'Noto Sans TC', sans-serif;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#game { display: block; width: 100vw; height: 100vh; }
+#hud {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  color: #fff; font-size: 14px; text-shadow: 0 1px 2px #000; pointer-events: none;
+}
+#touch-layer { position: fixed; inset: 0; pointer-events: none; }
+#joystick {
+  display: none; position: fixed; left: 32px; bottom: 32px;
+  width: 120px; height: 120px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15); border: 2px solid rgba(255, 255, 255, 0.4);
+}
+#joystick-knob {
+  position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px;
+  border-radius: 50%; background: rgba(255, 255, 255, 0.55);
+}
+body.touch #joystick { display: block; }
