@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { Deer } from './animals/deer';
+import { createHerd } from './animals/herd';
 import { STANDARD_ATMOSPHERE, FlightEnv } from './ballistics/ballistics';
 import { angleInfo, boreDirection, muzzleOrigin } from './ballistics/shot';
 import { vec3 } from './core/vec3';
@@ -6,7 +8,7 @@ import { BulletSystem, Impact } from './game/bullets';
 import { LOOK } from './game/config';
 import { Player } from './game/player';
 import { EYE_ZOOM, Rifle, SIGHT_HEIGHT } from './game/rifle';
-import { Target, createRange } from './game/targets';
+import type { Target } from './game/targets';
 import { STRINGS } from './i18n';
 import { Actions, Input } from './input/input';
 import { Hud, SCOPE_CENTER_Y } from './ui/hud';
@@ -15,7 +17,7 @@ import { createTerrainObject } from './world/terrainMesh';
 import { createVegetation, windUniforms } from './world/vegetation';
 import { Wind } from './world/wind';
 
-// P3: player, scope, rifle and live ballistics on practice targets. Animals arrive in P4.
+// P4: a grazing herd with anatomical hit detection and wound physiology. AI arrives in P5.
 
 const SEED = 1234;
 const RANGE_MAX = 1200;
@@ -52,16 +54,21 @@ const player = new Player(terrain, vegetation.rests);
 const spawn = terrain.spawnPoint();
 player.spawn(spawn.x, spawn.z, spawn.yaw, spawn.pitch);
 
-const targets: Target[] = createRange(terrain, player.eye, spawn.target);
-for (const t of targets) scene.add(t.object);
+// Practice boards (createRange) are kept in code for a future practice range in the cabin.
+const targets: Target[] = [];
+
+const herd: Deer[] = createHerd(terrain, spawn.target, 5, SEED + 7);
+for (const d of herd) scene.add(d.object);
 
 const rifle = new Rifle();
 let elapsed = 0;
 
 /** Wind at a point, using height above the local valley floor for exposure. */
+let windScale = 1; // test hook: 0 disables wind to isolate other effects
 function windAt(t: number, p: { x: number; y: number; z: number }) {
   const floor = terrain.height(terrain.riverX(p.z), p.z);
-  return wind.at(t, p.y - floor);
+  const w = wind.at(t, p.y - floor);
+  return { x: w.x * windScale, y: w.y * windScale, z: w.z * windScale };
 }
 const flightEnv = (t: number): FlightEnv => ({ atmosphere: STANDARD_ATMOSPHERE, wind: (p) => windAt(t, p) });
 
@@ -89,8 +96,25 @@ const input = new Input(canvas, document.getElementById('joystick-knob')!, actio
 const hud = new Hud(actions);
 hint.textContent = input.isTouch ? STRINGS.hintTouch : STRINGS.hintDesktop;
 
+// Report the moment each deer first falls (CNS hits go straight from wounded to dead).
+const fallen = new Set<Deer>();
+for (const d of herd) {
+  d.onConditionChange = (deer, condition) => {
+    const first = deer.hits[0];
+    if ((condition === 'down' || condition === 'dead') && first && !fallen.has(deer)) {
+      fallen.add(deer);
+      hud.showToast(STRINGS.deerDown(elapsed - first.time), 4);
+    }
+  };
+}
+
 function onImpact(impact: Impact) {
   switch (impact.kind) {
+    case 'animal': {
+      const w = impact.hit.wound;
+      hud.showToast(`${STRINGS.hitAnimal(w.organs.map((o) => o.organ.name), !!w.exit)}\n${STRINGS.flight(impact.range, impact.time)}`, 4);
+      break;
+    }
     case 'target': {
       const { hit } = impact;
       const head = hit.inBull ? STRINGS.hitBull : STRINGS.hitBoard;
@@ -98,14 +122,14 @@ function onImpact(impact: Impact) {
       break;
     }
     case 'ground':
-      hud.showToast(`${STRINGS.hitGround(impact.range)} · ${STRINGS.flight(impact.range, impact.time)}`);
+      hud.showToast(`${STRINGS.hitGround} · ${STRINGS.flight(impact.range, impact.time)}`);
       break;
     case 'lost':
       hud.showToast(STRINGS.miss);
       break;
   }
 }
-const bullets = new BulletSystem(scene, terrain, targets, flightEnv, onImpact);
+const bullets = new BulletSystem(scene, terrain, targets, herd, flightEnv, onImpact);
 
 function aimDirection(): THREE.Vector3 {
   return new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
@@ -117,6 +141,7 @@ function shoot() {
   const sight = vec3(d.x, d.y, d.z);
   const bore = boreDirection(sight, rifle.elevation);
   const muzzle = muzzleOrigin(vec3(eye.x, eye.y, eye.z), sight, SIGHT_HEIGHT);
+  for (const d of herd) d.alert();
   bullets.fire(rifle.ammo, new THREE.Vector3(muzzle.x, muzzle.y, muzzle.z), new THREE.Vector3(bore.x, bore.y, bore.z));
   navigator.vibrate?.(30);
 }
@@ -165,14 +190,24 @@ addEventListener('resize', resize);
 resize();
 
 // Exposed for automated checks and debugging in the browser console.
-(window as unknown as { __sniper: object }).__sniper = { player, rifle, actions, targets };
+(window as unknown as { __sniper: object }).__sniper = {
+  player,
+  rifle,
+  actions,
+  targets,
+  herd,
+  setTimeScale: (s: number) => (timeScale = s),
+  setWindScale: (s: number) => (windScale = s),
+};
 
+/** Debug/test hook to fast-forward animal physiology and bullets. */
+let timeScale = 1;
 const clock = new THREE.Clock();
 let rangeTimer = 0;
 let rangeText: string = STRINGS.noRange;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
-  elapsed += dt;
+  elapsed += dt * timeScale;
   const f = input.sample();
 
   player.update(dt, f, rifle.magnification * EYE_ZOOM);
@@ -193,7 +228,8 @@ function frame() {
   }
   camera.updateMatrixWorld();
 
-  bullets.update(dt, elapsed);
+  bullets.update(dt * timeScale, elapsed);
+  for (const d of herd) d.update(dt * timeScale);
 
   const w = windAt(elapsed, player.eye);
   windUniforms.uTime.value = elapsed;

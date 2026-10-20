@@ -25,7 +25,11 @@ export const STRINGS = {
   },
   hitBull: '命中紅心！',
   hitBoard: '命中靶板',
-  hitGround: (m: number) => `落在地面 · ${m.toFixed(0)} m`,
+  hitGround: '落在地面',
   miss: '未命中',
+  // Debug-level hit readout until tracking (P6) and the harvest X-ray (P7) replace it.
+  hitAnimal: (organs: string[], passThrough: boolean) =>
+    `命中：${organs.length ? organs.join('、') : '肌肉'}${passThrough ? ' · 貫穿' : ' · 留在體內'}`,
+  deerDown: (seconds: number) => `鹿倒下了（中彈後 ${seconds.toFixed(1)} 秒）`,
   flight: (m: number, t: number) => `${m.toFixed(0)} m · 飛行 ${t.toFixed(2)} 秒`,
 } as const;
