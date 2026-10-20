@@ -10,87 +10,190 @@ export type OrganId =
   | 'brain' | 'neckSpine' | 'spine' | 'heart' | 'lungL' | 'lungR' | 'aorta'
   | 'liver' | 'gut' | 'legFL' | 'legFR' | 'legHL' | 'legHR';
 
-/** Shapes in the 'neck' group rotate with the neck (grazing, alert), defined here in the head-up rest pose. */
-export type Shape = ({ kind: 'ellipsoid'; c: Vec3; r: Vec3 } | { kind: 'capsule'; a: Vec3; b: Vec3; r: number }) & {
-  neck?: boolean;
-};
+/** Rigid parts that can be posed; each rotates about local x at its pivot. */
+export type PartId = 'neck' | 'legFL' | 'legFR' | 'legHL' | 'legHR';
+
+/**
+ * A volume in the body frame, in the rest pose (head up, legs straight). `part` makes it follow
+ * that part's rotation; `skin` picks the visual material when the model is built from it.
+ * Capsules taper linearly from `r` at `a` to `rb` at `b`.
+ */
+export type Shape = (
+  | { kind: 'ellipsoid'; c: Vec3; r: Vec3 }
+  | { kind: 'capsule'; a: Vec3; b: Vec3; r: number; rb: number }
+  | { kind: 'body' }
+) & { part?: PartId; skin?: 'coat' | 'hoof' };
 
 /** Pivot at the base of the neck; the visual model rotates its neck group about local x here. */
 export const NECK_PIVOT = vec3(0, 0.98, 0.5);
+const FRONT_HIP = (x: number) => vec3(x, 0.72, 0.45);
+const HIND_HIP = (x: number) => vec3(x, 0.76, -0.48);
+export const PIVOTS: Record<PartId, Vec3> = {
+  neck: NECK_PIVOT,
+  legFL: FRONT_HIP(0.11),
+  legFR: FRONT_HIP(-0.11),
+  legHL: HIND_HIP(0.11),
+  legHR: HIND_HIP(-0.11),
+};
+export const LEG_PARTS: PartId[] = ['legFL', 'legFR', 'legHL', 'legHR'];
 
 export interface Pose {
   /** Rotation of the neck group about local x, radians (Three.js convention, positive = head down). */
   neckPitch: number;
+  /** Leg swing about local x at each hip, in LEG_PARTS order (positive = foot swings back). */
+  legs: [number, number, number, number];
 }
-export const REST_POSE: Pose = { neckPitch: 0 };
+export const REST_POSE: Pose = { neckPitch: 0, legs: [0, 0, 0, 0] };
+
+function partAngle(part: PartId, pose: Pose): number {
+  return part === 'neck' ? pose.neckPitch : pose.legs[LEG_PARTS.indexOf(part)];
+}
+
+// ---- Body silhouette, shared by hit testing and the visual mesh ----
+
+export const BODY_HALF_LENGTH = 0.66;
+type Keys = ReadonlyArray<readonly [number, number]>;
+/** Straight back, deep brisket, tucked waist, rounded rump (y values along local z). */
+export const BODY_BACK: Keys = [[-0.66, 0.96], [-0.5, 1.07], [-0.2, 1.06], [0.1, 1.05], [0.35, 1.07], [0.55, 1.05], [0.66, 0.98]];
+export const BODY_BELLY: Keys = [[-0.66, 0.82], [-0.5, 0.68], [-0.2, 0.67], [0.1, 0.64], [0.35, 0.59], [0.55, 0.64], [0.66, 0.82]];
+const BODY_HALF_WIDTH: Keys = [[-0.66, 0.09], [-0.5, 0.17], [-0.2, 0.19], [0.1, 0.2], [0.35, 0.18], [0.55, 0.14], [0.66, 0.08]];
+
+export function profile(keys: Keys, z: number): number {
+  if (z <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) {
+    if (z <= keys[i][0]) {
+      const [z0, a] = keys[i - 1];
+      const [z1, b] = keys[i];
+      return a + ((b - a) * (z - z0)) / (z1 - z0);
+    }
+  }
+  return keys[keys.length - 1][1];
+}
+
+/** Elliptical cross-section of the torso at local z, or null beyond its ends. */
+export function bodySection(z: number): { mid: number; halfHeight: number; halfWidth: number } | null {
+  const u = z / BODY_HALF_LENGTH;
+  if (Math.abs(u) > 1 + 1e-6) return null; // tolerate float32 mesh vertices at the tips
+  const round = Math.pow(Math.sqrt(Math.max(1 - u * u, 0)), 0.7); // slightly fuller ends than an ellipsoid
+  const top = profile(BODY_BACK, z);
+  const bottom = profile(BODY_BELLY, z);
+  return { mid: (top + bottom) / 2, halfHeight: ((top - bottom) / 2) * round, halfWidth: profile(BODY_HALF_WIDTH, z) * round };
+}
 
 export interface Organ {
   id: OrganId;
   name: string; // display name (zh-Hant)
-  shape: Shape;
+  shapes: Shape[];
   bone: boolean; // costs a fixed amount of energy to pass through
 }
 
-const E = (c: Vec3, r: Vec3, neck = false): Shape => ({ kind: 'ellipsoid', c, r, neck });
-const C = (a: Vec3, b: Vec3, r: number, neck = false): Shape => ({ kind: 'capsule', a, b, r, neck });
+const E = (c: Vec3, r: Vec3, part?: PartId): Shape => ({ kind: 'ellipsoid', c, r, part });
+const C = (a: Vec3, b: Vec3, r: number, rb = r, part?: PartId, skin?: 'hoof'): Shape => ({ kind: 'capsule', a, b, r, rb, part, skin });
 
-/** Outer body volume (skin and muscle). */
+function frontLegHull(part: PartId, x: number): Shape[] {
+  const h = FRONT_HIP(x);
+  const at = (dy: number, dz: number) => vec3(x, h.y + dy, h.z + dz);
+  return [
+    E(at(-0.12, 0), vec3(0.06, 0.15, 0.075), part), // shoulder and forearm muscle
+    C(at(-0.1, 0.01), at(-0.34, 0.02), 0.045, 0.03, part),
+    C(at(-0.34, 0.02), at(-0.62, 0.03), 0.024, 0.02, part),
+    C(at(-0.62, 0.03), at(-0.68, 0.04), 0.022, 0.026, part, 'hoof'),
+  ];
+}
+
+function hindLegHull(part: PartId, x: number): Shape[] {
+  const h = HIND_HIP(x);
+  const at = (dy: number, dz: number) => vec3(x, h.y + dy, h.z + dz);
+  return [
+    E(at(-0.06, -0.01), vec3(0.075, 0.17, 0.13), part), // haunch
+    C(at(-0.2, 0.04), at(-0.4, -0.1), 0.05, 0.028, part),
+    C(at(-0.4, -0.1), at(-0.66, -0.07), 0.024, 0.02, part),
+    C(at(-0.66, -0.07), at(-0.72, -0.05), 0.022, 0.026, part, 'hoof'),
+  ];
+}
+
+/** Outer body volume (skin and muscle). The visual model is built from these same shapes. */
 export const HULL: Shape[] = [
-  E(vec3(0, 0.85, 0), vec3(0.2, 0.24, 0.62)), // torso
-  E(vec3(0, 0.82, 0.3), vec3(0.19, 0.23, 0.3)), // deep chest (brisket) around heart and lungs
-  C(vec3(0, 0.98, 0.5), vec3(0, 1.36, 0.76), 0.1, true), // neck
-  E(vec3(0, 1.42, 0.88), vec3(0.08, 0.09, 0.17), true), // head
-  C(vec3(0.11, 0.7, 0.45), vec3(0.11, 0.04, 0.48), 0.05), // front left leg
-  C(vec3(-0.11, 0.7, 0.45), vec3(-0.11, 0.04, 0.48), 0.05),
-  C(vec3(0.11, 0.72, -0.5), vec3(0.11, 0.04, -0.54), 0.06), // hind left leg
-  C(vec3(-0.11, 0.72, -0.5), vec3(-0.11, 0.04, -0.54), 0.06),
+  { kind: 'body' },
+  C(vec3(0, 0.92, 0.45), vec3(0, 1.38, 0.76), 0.15, 0.075, 'neck'),
+  E(vec3(0, 1.4, 0.79), vec3(0.068, 0.075, 0.075), 'neck'), // throat latch: joins neck to head
+  E(vec3(0, 1.46, 0.85), vec3(0.085, 0.09, 0.105), 'neck'), // skull
+  C(vec3(0, 1.44, 0.9), vec3(0, 1.39, 1.02), 0.065, 0.038, 'neck'), // muzzle
+  ...frontLegHull('legFL', 0.11),
+  ...frontLegHull('legFR', -0.11),
+  ...hindLegHull('legHL', 0.11),
+  ...hindLegHull('legHR', -0.11),
 ];
 
+function frontLegBone(part: PartId, x: number): Shape[] {
+  const h = FRONT_HIP(x);
+  const at = (dy: number, dz: number) => vec3(x, h.y + dy, h.z + dz);
+  return [C(at(-0.04, 0), at(-0.34, 0.02), 0.022, 0.02, part), C(at(-0.34, 0.02), at(-0.66, 0.035), 0.016, 0.014, part)];
+}
+
+function hindLegBone(part: PartId, x: number): Shape[] {
+  const h = HIND_HIP(x);
+  const at = (dy: number, dz: number) => vec3(x, h.y + dy, h.z + dz);
+  return [C(at(-0.02, 0), at(-0.4, -0.1), 0.026, 0.02, part), C(at(-0.4, -0.1), at(-0.7, -0.06), 0.016, 0.014, part)];
+}
+
 export const ORGANS: Organ[] = [
-  { id: 'brain', name: '腦', shape: E(vec3(0, 1.46, 0.83), vec3(0.045, 0.045, 0.055), true), bone: false },
-  { id: 'neckSpine', name: '頸椎', shape: C(vec3(0, 1.04, 0.47), vec3(0, 1.4, 0.75), 0.03, true), bone: true },
-  { id: 'spine', name: '脊椎', shape: C(vec3(0, 1.03, 0.42), vec3(0, 1.0, -0.55), 0.032), bone: true },
-  { id: 'heart', name: '心臟', shape: E(vec3(0, 0.71, 0.33), vec3(0.06, 0.075, 0.065)), bone: false },
-  { id: 'lungL', name: '左肺', shape: E(vec3(0.085, 0.85, 0.3), vec3(0.085, 0.13, 0.17)), bone: false },
-  { id: 'lungR', name: '右肺', shape: E(vec3(-0.085, 0.85, 0.3), vec3(0.085, 0.13, 0.17)), bone: false },
-  { id: 'aorta', name: '主動脈', shape: C(vec3(0, 0.78, 0.32), vec3(0, 0.96, 0.05), 0.022), bone: false },
-  { id: 'liver', name: '肝臟', shape: E(vec3(-0.02, 0.78, 0.06), vec3(0.13, 0.12, 0.09)), bone: false },
-  { id: 'gut', name: '胃腸', shape: E(vec3(0, 0.78, -0.27), vec3(0.17, 0.18, 0.3)), bone: false },
-  { id: 'legFL', name: '左前腿骨', shape: C(vec3(0.11, 0.68, 0.45), vec3(0.11, 0.06, 0.48), 0.022), bone: true },
-  { id: 'legFR', name: '右前腿骨', shape: C(vec3(-0.11, 0.68, 0.45), vec3(-0.11, 0.06, 0.48), 0.022), bone: true },
-  { id: 'legHL', name: '左後腿骨', shape: C(vec3(0.11, 0.7, -0.5), vec3(0.11, 0.06, -0.54), 0.026), bone: true },
-  { id: 'legHR', name: '右後腿骨', shape: C(vec3(-0.11, 0.7, -0.5), vec3(-0.11, 0.06, -0.54), 0.026), bone: true },
+  { id: 'brain', name: '腦', shapes: [E(vec3(0, 1.48, 0.84), vec3(0.045, 0.045, 0.055), 'neck')], bone: false },
+  { id: 'neckSpine', name: '頸椎', shapes: [C(vec3(0, 1.0, 0.45), vec3(0, 1.42, 0.78), 0.03, 0.025, 'neck')], bone: true },
+  { id: 'spine', name: '脊椎', shapes: [C(vec3(0, 1.0, 0.42), vec3(0, 0.98, -0.55), 0.032)], bone: true },
+  { id: 'heart', name: '心臟', shapes: [E(vec3(0, 0.71, 0.33), vec3(0.06, 0.075, 0.065))], bone: false },
+  { id: 'lungL', name: '左肺', shapes: [E(vec3(0.085, 0.85, 0.3), vec3(0.085, 0.13, 0.17))], bone: false },
+  { id: 'lungR', name: '右肺', shapes: [E(vec3(-0.085, 0.85, 0.3), vec3(0.085, 0.13, 0.17))], bone: false },
+  { id: 'aorta', name: '主動脈', shapes: [C(vec3(0, 0.78, 0.32), vec3(0, 0.96, 0.05), 0.022)], bone: false },
+  { id: 'liver', name: '肝臟', shapes: [E(vec3(-0.02, 0.78, 0.06), vec3(0.13, 0.12, 0.09))], bone: false },
+  { id: 'gut', name: '胃腸', shapes: [E(vec3(0, 0.8, -0.27), vec3(0.16, 0.17, 0.28))], bone: false },
+  { id: 'legFL', name: '左前腿骨', shapes: frontLegBone('legFL', 0.11), bone: true },
+  { id: 'legFR', name: '右前腿骨', shapes: frontLegBone('legFR', -0.11), bone: true },
+  { id: 'legHL', name: '左後腿骨', shapes: hindLegBone('legHL', 0.11), bone: true },
+  { id: 'legHR', name: '右後腿骨', shapes: hindLegBone('legHR', -0.11), bone: true },
 ];
 
 /** Bounding sphere of the whole animal for cheap rejection. */
 export const BOUNDS = { c: vec3(0, 0.8, 0.1), r: 1.25 };
 
-/** Maps a body-frame point into the neck's rest frame for the given pose. */
-function unpose(p: Vec3, pose: Pose): Vec3 {
-  if (pose.neckPitch === 0) return p;
-  const c = Math.cos(-pose.neckPitch);
-  const s = Math.sin(-pose.neckPitch);
-  const y = p.y - NECK_PIVOT.y;
-  const z = p.z - NECK_PIVOT.z;
-  return vec3(p.x, NECK_PIVOT.y + y * c - z * s, NECK_PIVOT.z + y * s + z * c);
+/** Maps a body-frame point into a part's rest frame for the given pose. */
+function unpose(p: Vec3, part: PartId, pose: Pose): Vec3 {
+  const angle = partAngle(part, pose);
+  if (angle === 0) return p;
+  const pivot = PIVOTS[part];
+  const c = Math.cos(-angle);
+  const s = Math.sin(-angle);
+  const y = p.y - pivot.y;
+  const z = p.z - pivot.z;
+  return vec3(p.x, pivot.y + y * c - z * s, pivot.z + y * s + z * c);
 }
 
-export function contains(s: Shape, point: Vec3, pose: Pose = REST_POSE): boolean {
-  const p = s.neck ? unpose(point, pose) : point;
+/** Point-in-shape test; `inflate` (m) grows the shape, used to tolerate mesh faceting in tests. */
+export function contains(s: Shape, point: Vec3, pose: Pose = REST_POSE, inflate = 0): boolean {
+  const p = s.part ? unpose(point, s.part, pose) : point;
+  if (s.kind === 'body') {
+    const sec = bodySection(p.z);
+    if (!sec) return false;
+    const x = p.x / (sec.halfWidth + inflate);
+    const y = (p.y - sec.mid) / (sec.halfHeight + inflate);
+    return x * x + y * y <= 1;
+  }
   if (s.kind === 'ellipsoid') {
-    const x = (p.x - s.c.x) / s.r.x;
-    const y = (p.y - s.c.y) / s.r.y;
-    const z = (p.z - s.c.z) / s.r.z;
+    const x = (p.x - s.c.x) / (s.r.x + inflate);
+    const y = (p.y - s.c.y) / (s.r.y + inflate);
+    const z = (p.z - s.c.z) / (s.r.z + inflate);
     return x * x + y * y + z * z <= 1;
   }
   const ab = sub(s.b, s.a);
   const t = Math.max(0, Math.min(1, dot(sub(p, s.a), ab) / dot(ab, ab)));
   const q = add(s.a, scale(ab, t));
   const d = sub(p, q);
-  return dot(d, d) <= s.r * s.r;
+  const r = s.r + (s.rb - s.r) * t + inflate;
+  return dot(d, d) <= r * r;
 }
 
-export const inHull = (p: Vec3, pose: Pose = REST_POSE) => HULL.some((s) => contains(s, p, pose));
+export const inHull = (p: Vec3, pose: Pose = REST_POSE, inflate = 0) => HULL.some((s) => contains(s, p, pose, inflate));
+const inOrgan = (o: Organ, p: Vec3, pose: Pose) => o.shapes.some((s) => contains(s, p, pose));
 
 // ---- Terminal ballistics ----
 
@@ -150,7 +253,7 @@ export function traceWound(ammo: Ammo, entry: Vec3, dir: Vec3, velocity: number,
     travelled += STEP;
     energy -= lossPerM * STEP;
     for (const o of ORGANS) {
-      if (!contains(o.shape, p, pose)) {
+      if (!inOrgan(o, p, pose)) {
         insideBone.delete(o.id);
         continue;
       }

@@ -55,7 +55,7 @@ describe('anatomy and wound tracing', () => {
   });
 
   it('brain shot is instant', () => {
-    const w = shoot(vec3(0, 1.46, 0.83), BROADSIDE);
+    const w = shoot(vec3(0, 1.48, 0.84), BROADSIDE);
     expect(categorize(w)).toBe('cns');
     expect(Physiology.timeToCollapse([w])).toBe(0);
   });
@@ -100,7 +100,7 @@ describe('body shape', () => {
 describe('pose', () => {
   it('a grazing deer\'s brain moves with its lowered head', () => {
     const pitch = 1.6;
-    const rest = vec3(0, 1.46, 0.83);
+    const rest = vec3(0, 1.48, 0.84);
     // Rotate the rest-pose brain position by the neck pitch about the pivot.
     const y = rest.y - NECK_PIVOT.y;
     const z = rest.z - NECK_PIVOT.z;
@@ -109,11 +109,11 @@ describe('pose', () => {
     const d = normalize(BROADSIDE);
     const a = add(posed, scale(d, -2));
     const b = add(posed, scale(d, 2));
-    const f = findEntry(a, b, { neckPitch: pitch })!;
-    const w = traceWound(sp, add(a, scale(sub3(b, a), f)), d, V300, { neckPitch: pitch });
+    const f = findEntry(a, b, { neckPitch: pitch, legs: [0, 0, 0, 0] })!;
+    const w = traceWound(sp, add(a, scale(sub3(b, a), f)), d, V300, { neckPitch: pitch, legs: [0, 0, 0, 0] });
     expect(categorize(w)).toBe('cns');
     // The rest-pose head position is now empty air.
     const a2 = add(rest, scale(d, -2));
-    expect(findEntry(a2, add(rest, scale(d, 2)), { neckPitch: pitch })).toBeNull();
+    expect(findEntry(a2, add(rest, scale(d, 2)), { neckPitch: pitch, legs: [0, 0, 0, 0] })).toBeNull();
   });
 });

@@ -20,7 +20,7 @@ export interface DeerHit {
 export class Deer {
   readonly model: DeerModel;
   readonly physiology = new Physiology();
-  readonly pose: Pose = { neckPitch: GRAZE_PITCH };
+  readonly pose: Pose = { neckPitch: GRAZE_PITCH, legs: [0, 0, 0, 0] };
   readonly hits: DeerHit[] = [];
   onConditionChange: ((deer: Deer, condition: Condition) => void) | null = null;
   private grazeTimer: number;
@@ -91,6 +91,8 @@ export class Deer {
     const target = this.grazing ? GRAZE_PITCH : ALERT_PITCH;
     this.pose.neckPitch += (target - this.pose.neckPitch) * Math.min(1, dt * 2.5);
     this.model.neck.rotation.x = this.pose.neckPitch;
+    // Legs follow the pose so hit volumes and visuals stay in sync once gaits are animated.
+    this.model.legs.forEach((leg, i) => (leg.rotation.x = this.pose.legs[i]));
     this.animateDetails(dt);
     this.model.root.updateMatrixWorld();
   }

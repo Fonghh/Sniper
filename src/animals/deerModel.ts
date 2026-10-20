@@ -1,8 +1,11 @@
 import * as THREE from 'three';
-import { NECK_PIVOT } from './anatomy';
+import {
+  BODY_BACK, BODY_BELLY, BODY_HALF_LENGTH, HULL, LEG_PARTS, NECK_PIVOT, PIVOTS, PartId, Shape, bodySection, profile,
+} from './anatomy';
 
-// Procedural stylised low-poly white-tailed deer. Proportions stay true to anatomy.ts so hit
-// zones remain honest; the charm comes from silhouette, colouring and small idle motions.
+// Procedural stylised low-poly white-tailed deer. The body, neck, head and legs are built from
+// the same HULL shapes used for hit testing, so what you see is exactly what can be hit.
+// Ears, antlers, eyes, tail and colour patches are decoration and marked `userData.decor`.
 
 const COAT = 0x9a6136;
 const COAT_DARK = 0x6e4426;
@@ -18,30 +21,6 @@ const VERTEX_MAT = new THREE.MeshLambertMaterial({ vertexColors: true, flatShadi
 
 const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
-/** Linear interpolation through (z, value) keyframes. */
-function profile(keys: ReadonlyArray<readonly [number, number]>, z: number): number {
-  if (z <= keys[0][0]) return keys[0][1];
-  for (let i = 1; i < keys.length; i++) {
-    if (z <= keys[i][0]) {
-      const [z0, a] = keys[i - 1];
-      const [z1, b] = keys[i];
-      return a + ((b - a) * (z - z0)) / (z1 - z0);
-    }
-  }
-  return keys[keys.length - 1][1];
-}
-
-// Body silhouette along local z: straight back, deep brisket, tucked waist, rounded rump.
-const BACK: ReadonlyArray<readonly [number, number]> = [
-  [-0.66, 0.96], [-0.5, 1.07], [-0.2, 1.06], [0.1, 1.05], [0.35, 1.07], [0.55, 1.05], [0.66, 0.98],
-];
-const BELLY: ReadonlyArray<readonly [number, number]> = [
-  [-0.66, 0.82], [-0.5, 0.68], [-0.2, 0.67], [0.1, 0.64], [0.35, 0.59], [0.55, 0.64], [0.66, 0.82],
-];
-const HALF_WIDTH: ReadonlyArray<readonly [number, number]> = [
-  [-0.66, 0.09], [-0.5, 0.17], [-0.2, 0.19], [0.1, 0.2], [0.35, 0.18], [0.55, 0.14], [0.66, 0.08],
-];
-
 /** One deformed sphere for the whole torso, coloured per face: dark back, coat, pale belly and rump. */
 function bodyGeometry(): THREE.BufferGeometry {
   const geo = new THREE.SphereGeometry(1, 18, 12);
@@ -52,14 +31,11 @@ function bodyGeometry(): THREE.BufferGeometry {
     const sy = pos.getY(i);
     const sz = pos.getZ(i);
     const r = Math.sqrt(Math.max(1 - sz * sz, 0));
-    const round = Math.pow(r, 0.7); // slightly fuller ends than a plain ellipsoid
     const nx = r > 1e-6 ? sx / r : 0;
     const ny = r > 1e-6 ? sy / r : 0;
-    const z = sz * 0.66;
-    const top = profile(BACK, z);
-    const bottom = profile(BELLY, z);
-    const mid = (top + bottom) / 2;
-    pos.setXYZ(i, nx * profile(HALF_WIDTH, z) * round, mid + ny * ((top - bottom) / 2) * round, z);
+    const z = sz * BODY_HALF_LENGTH;
+    const sec = bodySection(z)!;
+    pos.setXYZ(i, nx * sec.halfWidth, sec.mid + ny * sec.halfHeight, z);
   }
   const flat = geo.toNonIndexed();
   flat.computeVertexNormals();
@@ -71,8 +47,8 @@ function bodyGeometry(): THREE.BufferGeometry {
   for (let i = 0; i < p.count; i += 3) {
     const cy = (p.getY(i) + p.getY(i + 1) + p.getY(i + 2)) / 3;
     const cz = (p.getZ(i) + p.getZ(i + 1) + p.getZ(i + 2)) / 3;
-    const top = profile(BACK, cz);
-    const bottom = profile(BELLY, cz);
+    const top = profile(BODY_BACK, cz);
+    const bottom = profile(BODY_BELLY, cz);
     const t = (cy - bottom) / (top - bottom); // 0 belly .. 1 back
     let c = coat;
     if (t < 0.16 || (cz < -0.6 && t < 0.55)) c = pale;
@@ -107,30 +83,25 @@ export interface DeerModel {
   tail: THREE.Group;
 }
 
-function frontLeg(x: number): THREE.Group {
-  const hip = new THREE.Group();
-  hip.position.set(x, 0.72, 0.45);
-  const knee = v(0, -0.34, 0.02);
-  const fetlock = v(0, -0.62, 0.03);
-  hip.add(blob(v(0, -0.12, 0), v(0.06, 0.15, 0.075), COAT_MAT, 7, 5)); // shoulder/forearm muscle
-  hip.add(segment(v(0, -0.1, 0.01), knee, 0.045, 0.03, COAT_MAT));
-  hip.add(segment(knee, fetlock, 0.024, 0.02, COAT_MAT));
-  hip.add(segment(fetlock, v(0, -0.68, 0.04), 0.022, 0.026, DARK_MAT, 5));
-  return hip;
+/** Builds a visual mesh for one hull shape, relative to `origin` (its part's pivot). */
+function shapeMesh(shape: Shape, origin: THREE.Vector3): THREE.Object3D {
+  const rel = (p: { x: number; y: number; z: number }) => v(p.x, p.y, p.z).sub(origin);
+  const mat = shape.skin === 'hoof' ? DARK_MAT : COAT_MAT;
+  if (shape.kind === 'body') return new THREE.Mesh(bodyGeometry(), VERTEX_MAT);
+  if (shape.kind === 'ellipsoid') return blob(rel(shape.c), v(shape.r.x, shape.r.y, shape.r.z), mat, 9, 7);
+  const mesh = segment(rel(shape.a), rel(shape.b), shape.r, shape.rb, mat, 8);
+  // Round the joints so segments meet without gaps.
+  const capA = blob(rel(shape.a), v(shape.r, shape.r, shape.r), mat, 7, 5);
+  const capB = blob(rel(shape.b), v(shape.rb, shape.rb, shape.rb), mat, 7, 5);
+  const g = new THREE.Group();
+  g.add(mesh, capA, capB);
+  return g;
 }
 
-function hindLeg(x: number): THREE.Group {
-  const hip = new THREE.Group();
-  hip.position.set(x, 0.76, -0.48);
-  const stifle = v(0, -0.2, 0.04);
-  const hock = v(0, -0.4, -0.1);
-  const fetlock = v(0, -0.66, -0.07);
-  hip.add(blob(v(0, -0.06, -0.01), v(0.075, 0.17, 0.13), COAT_MAT, 8, 6)); // haunch
-  hip.add(segment(stifle, hock, 0.05, 0.028, COAT_MAT));
-  hip.add(segment(hock, fetlock, 0.024, 0.02, COAT_MAT));
-  hip.add(segment(fetlock, v(0, -0.72, -0.05), 0.022, 0.026, DARK_MAT, 5));
-  return hip;
-}
+const decor = <T extends THREE.Object3D>(o: T): T => {
+  o.traverse((c) => (c.userData.decor = true));
+  return o;
+};
 
 function ear(side: number, at: THREE.Vector3): THREE.Group {
   const g = new THREE.Group();
@@ -156,7 +127,17 @@ function antlers(neck: THREE.Group, p: (x: number, y: number, z: number) => THRE
 
 export function createDeerModel(buck: boolean): DeerModel {
   const root = new THREE.Group();
-  root.add(new THREE.Mesh(bodyGeometry(), VERTEX_MAT));
+  const parts = new Map<PartId, THREE.Group>();
+  for (const id of ['neck', ...LEG_PARTS] as PartId[]) {
+    const g = new THREE.Group();
+    g.position.set(PIVOTS[id].x, PIVOTS[id].y, PIVOTS[id].z);
+    parts.set(id, g);
+    root.add(g);
+  }
+  for (const shape of HULL) {
+    const parent = shape.part ? parts.get(shape.part)! : root;
+    parent.add(shapeMesh(shape, shape.part ? parent.position : v(0, 0, 0)));
+  }
 
   // Tail: brown on top, white underside that flags when alarmed.
   const tail = new THREE.Group();
@@ -164,35 +145,29 @@ export function createDeerModel(buck: boolean): DeerModel {
   tail.rotation.x = -0.5;
   tail.add(blob(v(0, -0.07, -0.015), v(0.045, 0.09, 0.022), COAT_MAT, 6, 5));
   tail.add(blob(v(0, -0.07, -0.002), v(0.042, 0.085, 0.022), PALE_MAT, 6, 5));
-  root.add(tail);
+  root.add(decor(tail));
 
-  const legs = [frontLeg(0.11), frontLeg(-0.11), hindLeg(0.11), hindLeg(-0.11)];
-  root.add(...legs);
-
-  // Neck group, built in the head-up rest pose relative to the pivot.
-  const neck = new THREE.Group();
-  neck.position.set(NECK_PIVOT.x, NECK_PIVOT.y, NECK_PIVOT.z);
+  // Head decoration lives in the neck group, positioned in the head-up rest pose.
+  const neck = parts.get('neck')!;
   const p = (x: number, y: number, z: number) => v(x - NECK_PIVOT.x, y - NECK_PIVOT.y, z - NECK_PIVOT.z);
-  neck.add(segment(p(0, 0.92, 0.45), p(0, 1.38, 0.76), 0.15, 0.075, COAT_MAT, 9));
-  neck.add(blob(p(0, 1.28, 0.77), v(0.06, 0.065, 0.035), PALE_MAT, 7, 5)); // throat patch
-
-  // Head: rounded skull, tapering muzzle, black nose, pale chin.
-  neck.add(blob(p(0, 1.46, 0.85), v(0.085, 0.09, 0.105), COAT_MAT, 9, 7));
-  neck.add(segment(p(0, 1.44, 0.9), p(0, 1.39, 1.02), 0.065, 0.038, COAT_MAT, 8));
-  neck.add(blob(p(0, 1.393, 1.025), v(0.034, 0.027, 0.024), DARK_MAT, 6, 5));
-  neck.add(blob(p(0, 1.36, 0.98), v(0.034, 0.02, 0.04), PALE_MAT, 6, 4));
+  neck.add(decor(blob(p(0, 1.28, 0.775), v(0.058, 0.065, 0.035), PALE_MAT, 7, 5))); // throat patch
+  neck.add(decor(blob(p(0, 1.393, 1.025), v(0.034, 0.027, 0.024), DARK_MAT, 6, 5))); // nose
+  neck.add(decor(blob(p(0, 1.36, 0.98), v(0.034, 0.02, 0.04), PALE_MAT, 6, 4))); // chin
 
   const ears: THREE.Group[] = [];
   for (const s of [1, -1]) {
     // Big glossy eyes with a pale ring and a glint read as friendly at a distance.
-    neck.add(blob(p(s * 0.066, 1.475, 0.89), v(0.014, 0.037, 0.04), PALE_MAT, 7, 5));
-    neck.add(blob(p(s * 0.073, 1.477, 0.893), v(0.012, 0.029, 0.031), EYE_MAT, 7, 5));
-    neck.add(blob(p(s * 0.083, 1.488, 0.9), v(0.005, 0.008, 0.008), GLINT_MAT, 4, 3));
-    const e = ear(s, p(s * 0.065, 1.53, 0.8));
+    neck.add(decor(blob(p(s * 0.066, 1.475, 0.89), v(0.014, 0.037, 0.04), PALE_MAT, 7, 5)));
+    neck.add(decor(blob(p(s * 0.073, 1.477, 0.893), v(0.012, 0.029, 0.031), EYE_MAT, 7, 5)));
+    neck.add(decor(blob(p(s * 0.083, 1.488, 0.9), v(0.005, 0.008, 0.008), GLINT_MAT, 4, 3)));
+    const e = decor(ear(s, p(s * 0.065, 1.53, 0.8)));
     neck.add(e);
     ears.push(e);
   }
-  if (buck) antlers(neck, p);
-  root.add(neck);
-  return { root, neck, legs, ears, tail };
+  if (buck) {
+    const rack = new THREE.Group();
+    antlers(rack, p);
+    neck.add(decor(rack));
+  }
+  return { root, neck, legs: LEG_PARTS.map((id) => parts.get(id)!), ears, tail };
 }
