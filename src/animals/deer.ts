@@ -5,7 +5,10 @@ import { Pose, WoundResult, findEntry, traceWound } from './anatomy';
 import { BodyState, DeerBrain, World } from './brain';
 import { createDeerModel, DeerModel } from './deerModel';
 import type { PlayerSignal } from './perception';
-import { Condition, Physiology } from './physiology';
+import { Condition, Physiology, categorize } from './physiology';
+import { bloodTypeFor, worstCategory } from '../tracking/signs';
+import type { Sign } from '../tracking/signs';
+import { TrailRecorder } from '../tracking/trail';
 
 const GRAZE_PITCH = 1.7; // head down
 const ALERT_PITCH = -0.1; // head up
@@ -27,6 +30,9 @@ export class Deer {
   readonly hits: DeerHit[] = [];
   readonly brain: DeerBrain;
   onConditionChange: ((deer: Deer, condition: Condition) => void) | null = null;
+  /** Where trail signs go; set by the Herd. */
+  signSink: ((sign: Omit<Sign, 'id'>) => void) | null = null;
+  private trail: TrailRecorder | null = null;
   private fall = 0; // 0..1 fall animation progress
   private groundY: number;
   private lastCondition: Condition = 'healthy';
@@ -82,6 +88,8 @@ export class Deer {
     const root = this.model.root;
 
     if (c === 'down' || c === 'dead') {
+      // The spot where it fell is the end of the trail.
+      this.trail?.update(this.brain.x, this.groundY, this.brain.z, this.brain.yaw, 0, true);
       // Tip over onto the side where it stands.
       this.fall = Math.min(1, this.fall + dt * 1.6);
       const k = 1 - (1 - this.fall) ** 3;
@@ -116,6 +124,7 @@ export class Deer {
     this.model.legs.forEach((leg, i) => (leg.rotation.x = this.pose.legs[i]));
     this.animateDetails(dt);
     root.updateMatrixWorld();
+    this.trail?.update(brain.x, this.groundY, brain.z, brain.yaw, brain.speed, brain.behavior === 'bedded');
   }
 
   /** Walk: diagonal pairs alternate. Gallop: front and hind pairs swing together with a bound. */
@@ -192,6 +201,14 @@ export class Deer {
     };
     this.hits.push(hit);
     this.physiology.applyWound(wound);
+    // Start (or update) the trail: the worst wound so far decides what the blood looks like.
+    const category = worstCategory(this.hits.map((h) => categorize(h.wound)));
+    const blood = category ? bloodTypeFor(category) : null;
+    if (!this.trail && this.signSink) this.trail = new TrailRecorder(this.id, this.signSink);
+    if (this.trail) {
+      if (this.hits.length === 1) this.trail.hit(this.brain.x, this.groundY, this.brain.z, blood);
+      else this.trail.blood = blood;
+    }
     // A hit deer bolts away from the shot's direction of travel.
     const back = new THREE.Vector3().copy(a).sub(b).normalize().multiplyScalar(50).add(hit.entryWorld);
     this.scare({ x: back.x, z: back.z });

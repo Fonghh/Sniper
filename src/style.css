@@ -121,3 +121,7 @@ body.scoped #scope { display: block; }
   white-space: pre-line;
 }
 #toast.show { opacity: 1; }
+
+/* ---- Tracking mode ---- */
+#btn-track.active { background: rgba(200, 160, 40, 0.75); border-color: #ffe066; }
+body.tracking #game { filter: saturate(0.55) brightness(0.92); }

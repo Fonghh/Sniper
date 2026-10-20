@@ -10,6 +10,7 @@ const $ = (id: string) => document.getElementById(id)!;
 
 export interface HudState {
   scoped: boolean;
+  tracking: boolean;
   prone: boolean;
   rested: boolean;
   cycling: boolean;
@@ -29,6 +30,7 @@ export interface HudState {
 export class Hud {
   private scopeBtn = $('btn-scope');
   private stanceBtn = $('btn-stance');
+  private trackBtn = $('btn-track') as HTMLButtonElement;
   private fireBtn = $('btn-fire');
   private zeroTrack = $('zero-track');
   private zeroThumb = $('zero-thumb');
@@ -46,7 +48,8 @@ export class Hud {
 
   constructor(private actions: Actions) {
     this.scopeBtn.textContent = STRINGS.scopeOn;
-    $('btn-track').textContent = STRINGS.track;
+    this.trackBtn.textContent = STRINGS.track;
+    this.trackBtn.disabled = false;
     this.fireBtn.textContent = STRINGS.fire;
     const tap = (el: HTMLElement, fn: () => void) =>
       el.addEventListener('pointerdown', (e) => {
@@ -55,6 +58,7 @@ export class Hud {
       });
     tap(this.scopeBtn, () => actions.toggleScope());
     tap(this.stanceBtn, () => actions.toggleStance());
+    tap(this.trackBtn, () => actions.toggleTracking());
     tap(this.magBtn, () => actions.cycleMagnification());
     this.bindFire();
     this.bindZeroSlider();
@@ -117,7 +121,7 @@ export class Hud {
     track.addEventListener('pointercancel', end);
   }
 
-  showToast(text: string, seconds = 3) {
+  showToast(text: string, seconds = 3.5) {
     this.toast.textContent = text;
     this.toast.classList.add('show');
     this.toastTimer = seconds;
@@ -127,6 +131,9 @@ export class Hud {
     document.body.classList.toggle('scoped', s.scoped);
     this.scopeBtn.textContent = s.scoped ? STRINGS.scopeOff : STRINGS.scopeOn;
     this.stanceBtn.textContent = s.prone ? STRINGS.stand : STRINGS.prone;
+    this.trackBtn.textContent = s.tracking ? STRINGS.tracking : STRINGS.track;
+    this.trackBtn.classList.toggle('active', s.tracking);
+    document.body.classList.toggle('tracking', s.tracking);
 
     if (s.zeroIndex !== this.lastZero) {
       this.lastZero = s.zeroIndex;

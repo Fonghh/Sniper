@@ -14,12 +14,14 @@ import type { Target } from './game/targets';
 import { STRINGS } from './i18n';
 import { Actions, Input } from './input/input';
 import { Hud, SCOPE_CENTER_Y } from './ui/hud';
+import type { Sign } from './tracking/signs';
+import { SignView } from './tracking/signView';
 import { Terrain } from './world/terrain';
 import { createTerrainObject } from './world/terrainMesh';
 import { createVegetation, windUniforms } from './world/vegetation';
 import { Wind } from './world/wind';
 
-// P5: the herd sees, hears and flees; wounded deer bed down. Tracking arrives in P6.
+// P6: wounded deer leave blood trails that can be read and followed in tracking mode.
 
 const SEED = 1234;
 const RANGE_MAX = 1200;
@@ -62,6 +64,34 @@ const targets: Target[] = [];
 const herd: Deer[] = createHerd(terrain, spawn.target, 5, SEED + 7);
 for (const d of herd) scene.add(d.object);
 const herdAI = new Herd(herd, terrain, mulberry32(SEED + 8));
+const signView = new SignView(scene, terrain, herdAI.signs);
+let tracking = false;
+let debugHits = false; // shows organ names on hit; for development only
+
+function signHint(s: Sign): string {
+  switch (s.kind) {
+    case 'hitSite':
+      return s.blood ? STRINGS.sign.hitSite : STRINGS.sign.hitSiteClean;
+    case 'track':
+      return STRINGS.sign.track(s.running);
+    case 'bed':
+      return STRINGS.sign.bed;
+    case 'blood':
+      return STRINGS.sign.blood[s.blood!];
+  }
+}
+
+/** Explains newly noticed signs, without repeating the same kind of sign on a trail. */
+const explained = new Set<string>();
+function explainDiscoveries(found: Sign[]) {
+  for (const s of found) {
+    const key = `${s.deerId}:${s.kind}:${s.kind === 'track' ? s.running : s.blood}`;
+    if (explained.has(key)) continue;
+    explained.add(key);
+    hud.showToast(signHint(s), 4);
+    return; // one hint at a time
+  }
+}
 
 const rifle = new Rifle();
 let elapsed = 0;
@@ -78,9 +108,26 @@ const flightEnv = (t: number): FlightEnv => ({ atmosphere: STANDARD_ATMOSPHERE, 
 const actions: Actions = {
   toggleScope: () => {
     player.scoped = !player.scoped;
+    if (player.scoped) tracking = false;
     if (!player.scoped) player.stability.endHold();
   },
   toggleStance: () => player.toggleStance(),
+  toggleTracking: () => {
+    tracking = !tracking;
+    if (tracking && player.scoped) player.scoped = false;
+  },
+  tap: (cx, cy) => {
+    if (!tracking || player.scoped) return;
+    const r = canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, camera);
+    const s = signView.pick(ray);
+    if (s) {
+      s.discovered = true;
+      hud.showToast(signHint(s), 4);
+    }
+  },
   beginShot: () => {
     if (player.scoped) player.stability.startHold();
   },
@@ -115,7 +162,8 @@ function onImpact(impact: Impact) {
   switch (impact.kind) {
     case 'animal': {
       const w = impact.hit.wound;
-      hud.showToast(`${STRINGS.hitAnimal(w.organs.map((o) => o.organ.name), !!w.exit)}\n${STRINGS.flight(impact.range, impact.time)}`, 4);
+      const head = debugHits ? STRINGS.hitAnimal(w.organs.map((o) => o.organ.name), !!w.exit) : STRINGS.hitAnimalPlain;
+      hud.showToast(`${head}\n${STRINGS.flight(impact.range, impact.time)}`, 4);
       break;
     }
     case 'target': {
@@ -202,6 +250,8 @@ resize();
   herd,
   setTimeScale: (s: number) => (timeScale = s),
   setWindScale: (s: number) => (windScale = s),
+  setDebugHits: (on: boolean) => (debugHits = on),
+  signs: herdAI.signs,
 };
 
 /** Debug/test hook to fast-forward animal physiology and bullets. */
@@ -242,6 +292,8 @@ function frame() {
     running: player.running,
   };
   herdAI.update(dt * timeScale, signal);
+  if (tracking) explainDiscoveries(herdAI.signs.discover(player.pos.x, player.pos.z));
+  signView.update(dt, tracking, player.pos.x, player.pos.z);
 
   const w = windAt(elapsed, player.eye);
   windUniforms.uTime.value = elapsed;
@@ -261,6 +313,7 @@ function frame() {
     dt,
     {
       scoped: player.scoped,
+      tracking,
       prone: player.stance === 'prone',
       rested: player.rested,
       cycling: rifle.cycling,

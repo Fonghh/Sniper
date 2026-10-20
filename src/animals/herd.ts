@@ -3,6 +3,7 @@ import { HALF_MAP, Terrain, WATER_LEVEL } from '../world/terrain';
 import type { World } from './brain';
 import { Deer } from './deer';
 import type { PlayerSignal } from './perception';
+import { SignBook } from '../tracking/trail';
 
 const CONTAGION_RADIUS = 90; // m: herd-mates within this follow a bolting deer
 const CONTAGION_DELAY: readonly [number, number] = [0.15, 0.6]; // s reaction time
@@ -16,6 +17,8 @@ export class Herd {
   private pending: Array<{ deer: Deer; at: number; from: { x: number; z: number } }> = [];
   private time = 0;
   readonly world: World;
+  /** Every sign left by wounded deer. */
+  readonly signs = new SignBook();
 
   constructor(
     readonly deer: Deer[],
@@ -29,6 +32,7 @@ export class Herd {
     };
     for (const d of deer) {
       d.brain.onFlee = (_brain, from) => this.spread(d, from);
+      d.signSink = (sign) => this.signs.add(sign);
     }
   }
 

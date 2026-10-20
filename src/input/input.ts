@@ -13,11 +13,14 @@ export interface InputFrame {
 export interface Actions {
   toggleScope(): void;
   toggleStance(): void;
+  toggleTracking(): void;
   beginShot(): void; // start holding breath
   releaseShot(fire: boolean): void; // fire, or cancel if false
   stepZero(delta: number): void;
   cycleMagnification(): void;
   isScoped(): boolean;
+  /** A short tap on the play area (touch), or the interact key at screen centre (desktop). */
+  tap(clientX: number, clientY: number): void;
 }
 
 const JOYSTICK_RADIUS = 50;
@@ -36,6 +39,7 @@ export class Input {
   private stickOrigin = { x: 0, y: 0 };
   private lookPointer: number | null = null;
   private lookLast = { x: 0, y: 0 };
+  private lookStart = { x: 0, y: 0, t: 0 };
   private mouseShot = false;
   readonly isTouch: boolean;
 
@@ -73,7 +77,12 @@ export class Input {
     if (e.repeat) return;
     this.keys.add(e.code);
     if (e.code === 'KeyC') this.actions.toggleStance();
+    if (e.code === 'KeyT') this.actions.toggleTracking();
     if (e.code === 'KeyZ') this.actions.cycleMagnification();
+    if (e.code === 'KeyE') {
+      const r = this.canvas.getBoundingClientRect();
+      this.actions.tap(r.left + r.width / 2, r.top + r.height / 2);
+    }
   }
 
   private onMouseDown(e: MouseEvent) {
@@ -105,6 +114,7 @@ export class Input {
     } else if (this.lookPointer === null) {
       this.lookPointer = e.pointerId;
       this.lookLast = { x: e.clientX, y: e.clientY };
+      this.lookStart = { x: e.clientX, y: e.clientY, t: performance.now() };
     }
   }
 
@@ -133,6 +143,8 @@ export class Input {
       this.knob.style.transform = '';
     } else if (e.pointerId === this.lookPointer) {
       this.lookPointer = null;
+      const moved = Math.hypot(e.clientX - this.lookStart.x, e.clientY - this.lookStart.y);
+      if (moved < 10 && performance.now() - this.lookStart.t < 300) this.actions.tap(e.clientX, e.clientY);
     }
   }
 
