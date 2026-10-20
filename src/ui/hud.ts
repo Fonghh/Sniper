@@ -1,4 +1,8 @@
 import { ZERO_STEPS } from '../game/rifle';
+
+/** Lens circle: centred a little above mid-screen, nearly full width. */
+export const SCOPE_CENTER_Y = 0.45; // fraction of play-area height
+const SCOPE_RADIUS = 0.48; // fraction of play-area width
 import { STRINGS } from '../i18n';
 import type { Actions } from '../input/input';
 
@@ -158,9 +162,10 @@ export class Hud {
     this.lastReticleKey = key;
     const pxPerMil = (heightPx / 2 / Math.tan(((fovDeg / 2) * Math.PI) / 180)) * 0.001;
     const cx = w / 2;
-    const cy = h / 2;
-    const radius = Math.min(w, h) * 0.46;
+    const cy = h * SCOPE_CENTER_Y;
+    const radius = Math.min(w, h) * SCOPE_RADIUS;
     this.scope.style.setProperty('--r', `${radius}px`);
+    this.scope.style.setProperty('--cy', `${cy}px`);
     const lines: string[] = [];
     const line = (x1: number, y1: number, x2: number, y2: number, sw: number) =>
       lines.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke-width="${sw}"/>`);

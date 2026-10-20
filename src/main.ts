@@ -9,7 +9,7 @@ import { EYE_ZOOM, Rifle, SIGHT_HEIGHT } from './game/rifle';
 import { Target, createRange } from './game/targets';
 import { STRINGS } from './i18n';
 import { Actions, Input } from './input/input';
-import { Hud } from './ui/hud';
+import { Hud, SCOPE_CENTER_Y } from './ui/hud';
 import { Terrain } from './world/terrain';
 import { createTerrainObject } from './world/terrainMesh';
 import { createVegetation, windUniforms } from './world/vegetation';
@@ -158,6 +158,7 @@ function resize() {
   const { clientWidth: w, clientHeight: h } = canvas;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
+  camera.fov = 0; // forces the view offset and projection to be rebuilt next frame
   camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize);
@@ -184,6 +185,10 @@ function frame() {
     : LOOK.verticalFov;
   if (camera.fov !== fov) {
     camera.fov = fov;
+    // Shift the projection centre up to the lens centre so the reticle marks the true aim point.
+    const { clientWidth: w, clientHeight: h } = canvas;
+    if (player.scoped) camera.setViewOffset(w, h, 0, (0.5 - SCOPE_CENTER_Y) * h, w, h);
+    else camera.clearViewOffset();
     camera.updateProjectionMatrix();
   }
   camera.updateMatrixWorld();

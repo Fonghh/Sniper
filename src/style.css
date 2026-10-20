@@ -50,7 +50,7 @@ body.touch #joystick { display: block; }
 }
 .btn:disabled { opacity: 0.35; }
 #mode-buttons {
-  position: absolute; right: 14px; top: 46%; display: flex; flex-direction: column; gap: 10px;
+  position: absolute; right: 14px; top: 56%; display: flex; flex-direction: column; gap: 10px;
 }
 #mode-buttons .btn { width: 64px; height: 44px; font-size: 14px; }
 #btn-fire {
@@ -64,7 +64,7 @@ body.touch #joystick { display: block; }
   position: absolute; right: 30px; bottom: 140px; width: 72px; display: flex; flex-direction: column;
   align-items: center; gap: 6px; color: #fff; font-size: 12px; text-shadow: 0 1px 2px #000;
 }
-#zero-track { position: relative; width: 56px; height: 170px; touch-action: none; }
+#zero-track { position: relative; width: 56px; height: 86px; touch-action: none; }
 #zero-rail {
   position: absolute; left: 50%; top: 0; bottom: 0; width: 6px; margin-left: -3px; border-radius: 3px;
   background: repeating-linear-gradient(to top, rgba(255,255,255,0.8) 0 2px, rgba(255,255,255,0.25) 2px calc(100% / 6));
@@ -81,24 +81,34 @@ body.scoped #hint { display: none; }
 
 /* ---- Scope ---- */
 #scope {
-  display: none; position: absolute; inset: 0; pointer-events: none; --r: 46vw;
+  display: none; position: absolute; inset: 0; pointer-events: none; --r: 48vw; --cy: 45%;
 }
 body.scoped #scope { display: block; }
-#scope::before {
-  content: ''; position: absolute; left: 50%; top: 50%; width: 92%; aspect-ratio: 1;
-  transform: translate(-50%, -50%); border-radius: 50%;
-  box-shadow: 0 0 0 200vmax #050505, inset 0 0 40px 18px rgba(0, 0, 0, 0.75);
+/* Outside the lens: the same view, dimmed and blurred, so the screen never goes fully black. */
+#scope-blur {
+  position: absolute; inset: 0; background: rgba(12, 16, 12, 0.5);
+  backdrop-filter: blur(6px) saturate(0.6); -webkit-backdrop-filter: blur(6px) saturate(0.6);
+  mask-image: radial-gradient(circle var(--r) at 50% var(--cy), transparent calc(100% - 1px), #000 100%);
+  -webkit-mask-image: radial-gradient(circle var(--r) at 50% var(--cy), transparent calc(100% - 1px), #000 100%);
 }
-#reticle { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* Scope tube rim and a soft inner vignette. */
+#scope::before {
+  content: ''; position: absolute; left: 50%; top: var(--cy); width: calc(var(--r) * 2); aspect-ratio: 1;
+  transform: translate(-50%, -50%); border-radius: 50%;
+  box-shadow: 0 0 0 5px rgba(15, 15, 15, 0.9), inset 0 0 28px 10px rgba(0, 0, 0, 0.55);
+  z-index: 1;
+}
+#reticle { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; }
 #scope-top {
-  position: absolute; left: 0; right: 0; top: calc(50% - var(--r) - 64px); display: flex; flex-direction: column;
+  text-shadow: 0 1px 3px #000; z-index: 2;
+  position: absolute; left: 0; right: 0; top: calc(var(--cy) - var(--r) - 64px); display: flex; flex-direction: column;
   align-items: center; gap: 6px; color: #e8f0d8; font-size: 18px; font-weight: 600;
 }
 #breath { width: 120px; height: 5px; background: rgba(255, 255, 255, 0.2); border-radius: 3px; overflow: hidden; }
 #breath-fill { height: 100%; width: 100%; background: #9fd36a; }
 #breath-fill.exhausted { background: #d9534f; }
 #btn-mag {
-  position: absolute; left: 18px; top: calc(50% + var(--r) + 14px); pointer-events: auto;
+  z-index: 2; position: absolute; left: 18px; top: calc(var(--cy) + var(--r) + 14px); pointer-events: auto;
   width: 54px; height: 36px; font-size: 14px;
 }
 #status {
