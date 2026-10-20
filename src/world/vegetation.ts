@@ -71,8 +71,16 @@ function instanced(geo: THREE.BufferGeometry, mat: THREE.Material, points: THREE
   return mesh;
 }
 
-export function createVegetation(terrain: Terrain): THREE.Group {
+/** Something the rifle can be rested on: a rock or a tree trunk. */
+export interface RestPoint {
+  x: number;
+  z: number;
+  radius: number;
+}
+
+export function createVegetation(terrain: Terrain): { group: THREE.Group; rests: RestPoint[] } {
   const group = new THREE.Group();
+  const rests: RestPoint[] = [];
   const forest = createNoise2D(terrain.seed + 50);
   const spawn = terrain.spawnPoint();
   const rand = mulberry32(terrain.seed + 77);
@@ -89,18 +97,21 @@ export function createVegetation(terrain: Terrain): THREE.Group {
   const sizes = trees.map(() => 0.8 + rand() * 0.7);
   const crownGeo = new THREE.ConeGeometry(2.4, 7, 6).translate(0, 5.5, 0);
   const trunkGeo = new THREE.CylinderGeometry(0.25, 0.35, 2.4, 5).translate(0, 1.1, 0);
+  trees.forEach((p, i) => rests.push({ x: p.x, z: p.z, radius: 0.35 * sizes[i] }));
   group.add(instanced(crownGeo, swayMaterial(0x2f5a32, 0.012), trees, (i) => sizes[i]));
   group.add(instanced(trunkGeo, new THREE.MeshLambertMaterial({ color: 0x5a4030, flatShading: true }), trees, (i) => sizes[i]));
 
   // Rocks cluster on steep ground; they double as rifle rests later.
   const rocks = scatter(terrain, 500, terrain.seed + 11, (_x, _z, _h, slope, r) => slope > 0.45 && r < 0.6);
   const rockGeo = new THREE.DodecahedronGeometry(1, 0).translate(0, 0.3, 0);
-  group.add(instanced(rockGeo, new THREE.MeshLambertMaterial({ color: 0x86847a, flatShading: true }), rocks, () => 0.7 + rand() * 1.6));
+  const rockSizes = rocks.map(() => 0.7 + rand() * 1.6);
+  rocks.forEach((p, i) => rests.push({ x: p.x, z: p.z, radius: rockSizes[i] }));
+  group.add(instanced(rockGeo, new THREE.MeshLambertMaterial({ color: 0x86847a, flatShading: true }), rocks, (i) => rockSizes[i]));
 
   // Grass tufts: the main visual wind cue.
   const grass = scatter(terrain, 14000, terrain.seed + 12, (_x, _z, h, slope) => slope < 0.6 && h < 150);
   const tuftGeo = new THREE.ConeGeometry(0.18, 0.7, 3).translate(0, 0.35, 0);
   group.add(instanced(tuftGeo, swayMaterial(0x7fa043, 0.08), grass, () => 0.7 + rand() * 0.8));
 
-  return group;
+  return { group, rests };
 }

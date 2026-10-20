@@ -10,11 +10,31 @@
   <body>
     <div id="app">
       <canvas id="game"></canvas>
+      <div id="scope">
+        <svg id="reticle"></svg>
+        <div id="scope-top">
+          <div id="scope-range"></div>
+          <div id="breath"><div id="breath-fill"></div></div>
+        </div>
+        <button id="btn-mag" class="btn small"></button>
+      </div>
       <div id="hud">
         <div id="wind"><span id="wind-arrow">↑</span><span id="wind-text"></span></div>
         <div id="info"></div>
       </div>
+      <div id="status"></div>
+      <div id="toast"></div>
       <div id="hint"></div>
+      <div id="mode-buttons">
+        <button id="btn-scope" class="btn"></button>
+        <button id="btn-stance" class="btn"></button>
+        <button id="btn-track" class="btn explore-only" disabled></button>
+      </div>
+      <div id="zero" class="scoped-only">
+        <div id="zero-label"></div>
+        <div id="zero-track"><div id="zero-rail"></div><div id="zero-thumb"></div></div>
+      </div>
+      <button id="btn-fire" class="btn scoped-only"></button>
       <div id="joystick"><div id="joystick-knob"></div></div>
     </div>
     <script type="module" src="/src/main.ts"></script>

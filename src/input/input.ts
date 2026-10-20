@@ -9,12 +9,23 @@ export interface InputFrame {
   lookPitch: number;
 }
 
+/** Discrete actions shared by keyboard/mouse and the on-screen controls. */
+export interface Actions {
+  toggleScope(): void;
+  toggleStance(): void;
+  beginShot(): void; // start holding breath
+  releaseShot(fire: boolean): void; // fire, or cancel if false
+  stepZero(delta: number): void;
+  cycleMagnification(): void;
+  isScoped(): boolean;
+}
+
 const JOYSTICK_RADIUS = 50;
 
 /**
- * Merges keyboard/mouse and touch into a single InputFrame.
- * Touch layout: left half of the screen is a floating-origin joystick,
- * right half is drag-to-look.
+ * Merges keyboard/mouse and touch into a single InputFrame and dispatches discrete actions.
+ * Touch layout: left half of the play area is a floating-origin joystick, right half is
+ * drag-to-look. On-screen buttons sit above the canvas and handle their own events.
  */
 export class Input {
   private keys = new Set<string>();
@@ -25,32 +36,64 @@ export class Input {
   private stickOrigin = { x: 0, y: 0 };
   private lookPointer: number | null = null;
   private lookLast = { x: 0, y: 0 };
+  private mouseShot = false;
   readonly isTouch: boolean;
 
   constructor(
     private canvas: HTMLCanvasElement,
     private knob: HTMLElement,
+    private actions: Actions,
   ) {
     this.isTouch = matchMedia('(pointer: coarse)').matches;
     if (this.isTouch) document.body.classList.add('touch');
 
-    addEventListener('keydown', (e) => this.keys.add(e.code));
+    addEventListener('keydown', (e) => this.onKey(e));
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => this.keys.clear());
 
-    canvas.addEventListener('click', () => {
-      if (!this.isTouch && document.pointerLockElement !== canvas) canvas.requestPointerLock();
-    });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
+    addEventListener('mouseup', (e) => this.onMouseUp(e));
     addEventListener('mousemove', (e) => {
       if (document.pointerLockElement !== canvas) return;
       this.yaw -= e.movementX * LOOK.mouseSensitivity * LOOK.horizontalBoost;
       this.pitch -= e.movementY * LOOK.mouseSensitivity;
+    });
+    addEventListener('wheel', (e) => {
+      if (document.pointerLockElement === canvas) actions.stepZero(e.deltaY < 0 ? 1 : -1);
     });
 
     canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     addEventListener('pointermove', (e) => this.onPointerMove(e));
     addEventListener('pointerup', (e) => this.onPointerUp(e));
     addEventListener('pointercancel', (e) => this.onPointerUp(e));
+  }
+
+  private onKey(e: KeyboardEvent) {
+    if (e.repeat) return;
+    this.keys.add(e.code);
+    if (e.code === 'KeyC') this.actions.toggleStance();
+    if (e.code === 'KeyZ') this.actions.cycleMagnification();
+  }
+
+  private onMouseDown(e: MouseEvent) {
+    if (this.isTouch) return;
+    if (document.pointerLockElement !== this.canvas) {
+      this.canvas.requestPointerLock();
+      return;
+    }
+    if (e.button === 2) this.actions.toggleScope();
+    if (e.button === 0 && this.actions.isScoped()) {
+      this.mouseShot = true;
+      this.actions.beginShot();
+    }
+  }
+
+  private onMouseUp(e: MouseEvent) {
+    if (e.button === 0 && this.mouseShot) {
+      this.mouseShot = false;
+      this.actions.releaseShot(true);
+    }
   }
 
   private onPointerDown(e: PointerEvent) {
