@@ -4,12 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Sniper 狩獵</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <canvas id="game"></canvas>
-    <div id="hud"></div>
-    <div id="touch-layer">
+    <div id="app">
+      <canvas id="game"></canvas>
+      <div id="hud">
+        <div id="wind"><span id="wind-arrow">↑</span><span id="wind-text"></span></div>
+        <div id="info"></div>
+      </div>
+      <div id="hint"></div>
       <div id="joystick"><div id="joystick-knob"></div></div>
     </div>
     <script type="module" src="/src/main.ts"></script>

@@ -28,7 +28,7 @@ export class Input {
   readonly isTouch: boolean;
 
   constructor(
-    canvas: HTMLCanvasElement,
+    private canvas: HTMLCanvasElement,
     private knob: HTMLElement,
   ) {
     this.isTouch = matchMedia('(pointer: coarse)').matches;
@@ -43,7 +43,7 @@ export class Input {
     });
     addEventListener('mousemove', (e) => {
       if (document.pointerLockElement !== canvas) return;
-      this.yaw -= e.movementX * LOOK.mouseSensitivity;
+      this.yaw -= e.movementX * LOOK.mouseSensitivity * LOOK.horizontalBoost;
       this.pitch -= e.movementY * LOOK.mouseSensitivity;
     });
 
@@ -55,7 +55,8 @@ export class Input {
 
   private onPointerDown(e: PointerEvent) {
     if (e.pointerType === 'mouse') return;
-    if (e.clientX < innerWidth / 2 && this.stickPointer === null) {
+    const rect = this.canvas.getBoundingClientRect();
+    if (e.clientX < rect.left + rect.width / 2 && this.stickPointer === null) {
       this.stickPointer = e.pointerId;
       this.stickOrigin = { x: e.clientX, y: e.clientY };
     } else if (this.lookPointer === null) {
@@ -76,7 +77,7 @@ export class Input {
       this.stick = { x: dx / JOYSTICK_RADIUS, y: -dy / JOYSTICK_RADIUS };
       this.knob.style.transform = `translate(${dx}px, ${dy}px)`;
     } else if (e.pointerId === this.lookPointer) {
-      this.yaw -= (e.clientX - this.lookLast.x) * LOOK.touchSensitivity;
+      this.yaw -= (e.clientX - this.lookLast.x) * LOOK.touchSensitivity * LOOK.horizontalBoost;
       this.pitch -= (e.clientY - this.lookLast.y) * LOOK.touchSensitivity;
       this.lookLast = { x: e.clientX, y: e.clientY };
     }

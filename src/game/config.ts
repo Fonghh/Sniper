@@ -11,5 +11,8 @@ export const PLAYER = {
 export const LOOK = {
   mouseSensitivity: 0.0022, // rad per pixel
   touchSensitivity: 0.0045,
+  // Portrait view is narrow horizontally, so turning is a little faster than tilting.
+  horizontalBoost: 1.3,
   maxPitch: Math.PI / 2 - 0.05,
+  verticalFov: 75, // degrees; ≈40° horizontal at 9:16
 } as const;
