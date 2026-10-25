@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "artifact": "ENTRY=main vite build && node scripts/artifact.mjs",
     "artifact:arena": "ENTRY=arena vite build && node scripts/artifact.mjs arena",
-    "artifact:ski": "ENTRY=ski vite build && node scripts/artifact.mjs ski"
+    "artifact:ski": "ENTRY=ski vite build && node scripts/artifact.mjs ski",
+    "artifact:archer": "ENTRY=archer vite build && node scripts/artifact.mjs archer"
   },
   "dependencies": {
     "three": "^0.169.0"

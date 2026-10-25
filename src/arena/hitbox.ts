@@ -16,7 +16,7 @@ export const LEGS: Box = { min: { x: -0.2, y: 0, z: -0.13 }, max: { x: 0.2, y: 0
 export const HEIGHT = 1.8;
 
 /** Fraction along a→b where it enters the sphere, or null. */
-function sphereEntry(a: V3, b: V3, c: V3, r: number): number | null {
+export function sphereEntry(a: V3, b: V3, c: V3, r: number): number | null {
   const d = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
   const f = { x: a.x - c.x, y: a.y - c.y, z: a.z - c.z };
   const A = d.x * d.x + d.y * d.y + d.z * d.z;

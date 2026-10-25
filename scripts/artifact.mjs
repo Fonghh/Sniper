@@ -4,10 +4,11 @@
 // Usage: npm run artifact        →  dist/artifact.html (hunting game)
 //        npm run artifact:arena  →  dist/arena/artifact.html (arena prototype)
 //        npm run artifact:ski    →  dist/ski/artifact.html (ski run)
+//        npm run artifact:archer →  dist/archer/artifact.html (archer wave shooter)
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const name = process.argv[2]; // arena | ski | (none: the hunting game)
+const name = process.argv[2]; // arena | ski | archer | (none: the hunting game)
 const dist = new URL(name ? `../dist/${name}/` : '../dist/', import.meta.url).pathname;
 const page = name ? `${name}.html` : 'index.html';
 const assets = readdirSync(join(dist, 'assets'));
