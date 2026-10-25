@@ -10,7 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "artifact": "ENTRY=main vite build && node scripts/artifact.mjs",
-    "artifact:arena": "ENTRY=arena vite build && node scripts/artifact.mjs arena"
+    "artifact:arena": "ENTRY=arena vite build && node scripts/artifact.mjs arena",
+    "artifact:ski": "ENTRY=ski vite build && node scripts/artifact.mjs ski"
   },
   "dependencies": {
     "three": "^0.169.0"

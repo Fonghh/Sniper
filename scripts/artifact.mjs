@@ -3,12 +3,13 @@
 // the app markup and the inlined JS bundle.
 // Usage: npm run artifact        →  dist/artifact.html (hunting game)
 //        npm run artifact:arena  →  dist/arena/artifact.html (arena prototype)
+//        npm run artifact:ski    →  dist/ski/artifact.html (ski run)
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const arena = process.argv[2] === 'arena';
-const dist = new URL(arena ? '../dist/arena/' : '../dist/', import.meta.url).pathname;
-const page = arena ? 'arena.html' : 'index.html';
+const name = process.argv[2]; // arena | ski | (none: the hunting game)
+const dist = new URL(name ? `../dist/${name}/` : '../dist/', import.meta.url).pathname;
+const page = name ? `${name}.html` : 'index.html';
 const assets = readdirSync(join(dist, 'assets'));
 const js = assets.find((f) => f.endsWith('.js'));
 const css = assets.find((f) => f.endsWith('.css'));
