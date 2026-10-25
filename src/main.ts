@@ -22,7 +22,8 @@ import { HarvestScreen } from './ui/harvest';
 import { Hud, SCOPE_CENTER_Y } from './ui/hud';
 import { MapView } from './ui/mapView';
 import { Screens } from './ui/screens';
-import { applyDaylight } from './world/daylight';
+import { BookRenderer, createFlowers, pastelVertexColors, toonify } from './render/bookStyle';
+import { applyDaylight, setDayColors } from './world/daylight';
 import { Lookouts } from './world/lookouts';
 import { mulberry32 } from './world/random';
 import { SpawnPoint, Terrain } from './world/terrain';
@@ -74,6 +75,19 @@ const vegetation = createVegetation(terrain, isTouch ? 0.55 : 1);
 scene.add(vegetation.group);
 const lookouts = new Lookouts(terrain, 5);
 scene.add(lookouts.group);
+
+// Art style: '?style=book' or '#book' switches to the picture-book look (sample for evaluation;
+// hosted pages only pass a plain #anchor through).
+const bookStyle = new URLSearchParams(location.search).get('style') === 'book' || location.hash === '#book';
+const bookRenderer = bookStyle ? new BookRenderer(renderer) : null;
+if (bookStyle) {
+  scene.add(createFlowers(terrain, isTouch ? 2500 : 5000));
+  setDayColors(0xcfe0ee, 0xe9eee9);
+  applyDaylight(0, scene, sun, hemi);
+  pastelVertexColors(scene);
+  toonify(scene);
+}
+const draw = () => (bookRenderer ? bookRenderer.render(scene, camera) : renderer.render(scene, camera));
 const spawns: SpawnPoint[] = terrain.spawnPoints(4);
 
 // Practice boards (createRange) are kept in code for a future practice range in the cabin.
@@ -151,6 +165,7 @@ function startHunt() {
   rifle.setZeroIndex(0);
 
   herd = createHerd(terrain, spawn.target, HERD_SIZE, huntSeed);
+  if (bookStyle) for (const d of herd) toonify(d.object);
   for (const d of herd) {
     scene.add(d.object);
     d.onConditionChange = onDeerCondition;
@@ -594,7 +609,7 @@ function frame() {
 
   if (phase !== 'hunt') {
     if (phase === 'cabin' || phase === 'summary') cabinCamera(dt);
-    renderer.render(scene, camera);
+    draw();
     requestAnimationFrame(frame);
     return;
   }
@@ -683,7 +698,7 @@ function frame() {
     canvas.clientHeight,
   );
 
-  renderer.render(scene, camera);
+  draw();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

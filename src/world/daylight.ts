@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 
 const DAY_SKY = new THREE.Color(0xa9cbe0);
+const DAY_FOG = new THREE.Color(0xa9cbe0);
+
+/** Lets an art style choose its own daytime sky and haze colours. */
+export function setDayColors(sky: number, fog: number) {
+  DAY_SKY.set(sky);
+  DAY_FOG.set(fog);
+}
 const DUSK_SKY = new THREE.Color(0x3b4562);
 const DAY_SUN = new THREE.Color(0xfff2d6);
 const DUSK_SUN = new THREE.Color(0xff9a5a);
@@ -15,7 +22,7 @@ export function applyDaylight(
   const k = Math.max(0, Math.min(1, t));
   const sky = DAY_SKY.clone().lerp(DUSK_SKY, k);
   (scene.background as THREE.Color).copy(sky);
-  (scene.fog as THREE.Fog).color.copy(sky);
+  (scene.fog as THREE.Fog).color.copy(DAY_FOG).lerp(DUSK_SKY, k);
   sun.color.copy(DAY_SUN).lerp(DUSK_SUN, k);
   sun.intensity = 1.7 * (1 - 0.6 * k);
   hemi.intensity = 1.1 * (1 - 0.55 * k);
