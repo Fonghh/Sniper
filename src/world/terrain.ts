@@ -24,7 +24,14 @@ export class Terrain {
   private meander: Noise2D;
   readonly seed: number;
 
-  constructor(seed: number) {
+  /**
+   * `relief` scales the hills (1 = the hunting valley). A low value flattens the same landscape,
+   * e.g. for close-quarters arenas; the riverbed and map rim are unchanged.
+   */
+  constructor(
+    seed: number,
+    readonly relief = 1,
+  ) {
     this.seed = seed;
     this.detail = createNoise2D(seed);
     this.ridge = createNoise2D(seed + 1);
@@ -51,7 +58,7 @@ export class Terrain {
     // Raise the outer border so the playable area feels enclosed.
     const edge = Math.max(Math.abs(x), Math.abs(z)) - (HALF_MAP - 60);
     const rim = edge > 0 ? (edge / 60) ** 2 * 40 : 0;
-    return 2 + profile + ridged + detail + bed + rim;
+    return 2 + (profile + ridged + detail) * this.relief + bed + rim;
   }
 
   /** Surface slope as rise over run (0 = flat). */

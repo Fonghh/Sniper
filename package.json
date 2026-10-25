@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "artifact": "vite build && node scripts/artifact.mjs"
+    "artifact": "ENTRY=main vite build && node scripts/artifact.mjs",
+    "artifact:arena": "ENTRY=arena vite build && node scripts/artifact.mjs arena"
   },
   "dependencies": {
     "three": "^0.169.0"
