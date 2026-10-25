@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#1b1f1a" />
+    <title>Arena 手感測試</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/src/arena/arena.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game"></canvas>
+      <div id="vignette"></div>
+      <div id="crosshair"><i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i><b></b></div>
+      <div id="dirs"></div>
+      <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+      <div id="floaters"></div>
+      <div id="top">
+        <button id="btn-menu" class="btn" aria-label="選單">☰</button>
+        <div id="score"></div>
+        <div id="timer"></div>
+      </div>
+      <div id="feed"></div>
+      <div id="banner"></div>
+      <div id="hp"><div id="hp-fill"></div><span id="hp-text"></span></div>
+      <div id="joystick"><div id="joystick-knob"></div></div>
+      <div id="slots">
+        <button class="btn slot" data-w="rifle"><b>步槍</b><span></span></button>
+        <button class="btn slot" data-w="bow"><b>弓</b><span></span></button>
+        <button class="btn slot" data-w="grenade"><b>手雷</b><span></span></button>
+      </div>
+      <div id="ammo"></div>
+      <button id="btn-reload" class="btn round small" aria-label="換彈">↻</button>
+      <button id="btn-ads" class="btn round" aria-label="瞄準">◎</button>
+      <button id="btn-fire" class="btn round big" aria-label="開火"></button>
+      <div id="menu" class="overlay">
+        <h1>手感測試場</h1>
+        <p class="sub">子彈有飛行時間和下墜：遠處要抬高、移動目標要提前</p>
+        <button class="btn wide" data-mode="range">靶場練習<small>固定靶 10–70 m、移動靶</small></button>
+        <button class="btn wide" data-mode="match">機器人對戰<small>3 分鐘・擊倒得分・倒下後重生</small></button>
+        <button class="btn wide" data-mode="waves">怪物波次<small>一波比一波多・倒下就結束・吐酸怪會拋酸液</small></button>
+        <div class="help">
+          <p><b>手機</b>　左半邊拖曳移動（推到底跑）・右半邊拖曳轉視角・按住開火鍵也能拖曳瞄準</p>
+          <p><b>電腦</b>　點畫面鎖定滑鼠・WASD 移動・Shift 跑・左鍵開火・右鍵瞄準・1/2/3 或滾輪換武器・R 換彈・Esc 選單</p>
+          <p><b>步槍</b>　按住連發，220 m/s　<b>弓</b>　按住拉弓、放開射出，拉滿最快最痛　<b>手雷</b>　按住看拋物線、放開丟出，2 秒後爆炸，會反彈</p>
+        </div>
+      </div>
+      <div id="summary" class="overlay">
+        <h1 id="summary-title">時間到</h1>
+        <table id="ranking"></table>
+        <button id="btn-again" class="btn wide" data-mode="match">再來一場</button>
+        <button class="btn wide" data-mode="menu">回選單</button>
+      </div>
+    </div>
+    <script type="module" src="/src/arena/main.ts"></script>
+  </body>
+</html>

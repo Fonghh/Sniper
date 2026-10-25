@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#1b1f1a" />
+    <title>弓箭英雄</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/src/archer/archer.css" />
+  </head>
+  <body class="in-menu">
+    <div id="app">
+      <canvas id="game"></canvas>
+      <div id="touch"></div>
+      <div id="vignette"></div>
+      <div id="crosshair"></div>
+      <div id="dirs"></div>
+      <div id="floaters"></div>
+      <div id="rank"></div>
+      <div id="top">
+        <button id="btn-menu" class="btn" aria-label="選單">☰</button>
+        <div id="wave"></div>
+        <div id="score"></div>
+      </div>
+      <div id="skills"></div>
+      <div id="hp"><div id="hp-fill"></div><span id="hp-text"></span></div>
+      <div id="banner"></div>
+      <div id="stick"><div id="stick-knob"></div></div>
+      <div id="aim-hint">右邊拖曳瞄準<br />按著就會連射</div>
+      <div id="cards" class="overlay">
+        <div class="pick">選一個技能</div>
+        <div id="card-row"></div>
+      </div>
+      <div id="menu" class="overlay show">
+        <h1>弓箭英雄</h1>
+        <p class="sub">一波一波的怪物衝過來，箭會飛出弧線往下掉</p>
+        <button class="btn wide" id="btn-start">開始</button>
+        <div class="help">
+          <p><b>手機</b>　左手拖曳移動・右手拖曳瞄準，手指按著就會自動連射</p>
+          <p><b>電腦</b>　點畫面鎖定滑鼠・WASD 移動・滑鼠瞄準・按住左鍵連射</p>
+          <p>射頭傷害 2 倍。藍色盾兵從正面射不穿：繞到側面，或把箭往上拋，從頭頂落下去。</p>
+          <p>綠色炸彈兵會丟炸彈，地上出現紅圈就快閃開。每清完一波選一張技能卡，效果可以疊加。</p>
+        </div>
+      </div>
+      <div id="over" class="overlay">
+        <h1 id="over-rank"></h1>
+        <div id="over-stats"></div>
+        <button class="btn wide" id="btn-again">再來一次</button>
+        <button class="btn wide" id="btn-back">回選單</button>
+      </div>
+    </div>
+    <script type="module" src="/src/archer/main.ts"></script>
+  </body>
+</html>
