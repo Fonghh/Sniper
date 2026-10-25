@@ -16,6 +16,8 @@ const RESPAWN = 2.2; // s
 
 /** Anything that can be shot: a target dummy or a bot. */
 export interface Hittable {
+  /** Members of the same team cannot hurt each other (bots have none: free-for-all). */
+  readonly team?: string;
   readonly alive: boolean;
   readonly position: THREE.Vector3;
   /** First zone a world segment touches, with the fraction along it. */

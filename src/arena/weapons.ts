@@ -3,9 +3,11 @@ import type { ProjectileSpec } from './projectile';
 // Weapon tuning and firing state machines for the arena prototype. Pure logic.
 
 export type WeaponId = 'rifle' | 'bow' | 'grenade';
+/** Player weapons plus the spitter monster's acid glob. */
+export type ProjectileKind = WeaponId | 'acid';
 
 export interface WeaponDef {
-  id: WeaponId;
+  id: ProjectileKind;
   name: string;
   /** Muzzle/launch speed, m/s (full draw for the bow). */
   speed: number;

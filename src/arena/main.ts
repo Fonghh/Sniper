@@ -4,6 +4,7 @@ import { Actions, Input } from '../input/input';
 import { mulberry32 } from '../world/random';
 import { ArenaAudio } from './audio';
 import { BOT_LOOKS, Bot, BotContext } from './bots';
+import { Monster, MonsterContext, MonsterKind, waveRoster } from './monsters';
 import { ArenaPlayer, PLAYER_ARENA } from './player';
 import { STEP, traceArc } from './projectile';
 import { HitEvent, Projectiles } from './projectiles';
@@ -12,13 +13,16 @@ import { Viewmodel } from './viewmodel';
 import { Shot, WEAPONS, WeaponId, WeaponState, launchSpeed } from './weapons';
 import { ArenaWorld } from './world';
 
-// Arena feel prototype: a practice range and a 3-minute bot deathmatch.
+// Arena feel prototype: a practice range, a 3-minute bot deathmatch and monster waves.
 
 const SEED = 7;
 const MATCH_TIME = 180; // s
 const PLAYER_RESPAWN = 3; // s
 const BASE_FOV = 78;
 const THROW_LIFT = 0.12; // rad: grenades leave a little above the crosshair
+const WAVE_BREAK = 5; // s between waves
+const MAX_MONSTERS = 14; // alive at once
+const BEST_KEY = 'arena.waves.best';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>('game');
@@ -38,10 +42,13 @@ const viewmodel = new Viewmodel(camera);
 const audio = new ArenaAudio();
 const rand = mulberry32(SEED + 31);
 
-type Mode = 'menu' | 'range' | 'match' | 'summary';
+type Mode = 'menu' | 'range' | 'match' | 'waves' | 'summary';
+type PlayMode = 'range' | 'match' | 'waves';
 let mode: Mode = 'menu';
 let dummies: TargetDummy[] = [];
 let bots: Bot[] = [];
+let monsters: Monster[] = [];
+const waves = { wave: 0, queue: [] as MonsterKind[], spawnCd: 0, breakLeft: 0, score: 0 };
 let timeLeft = MATCH_TIME;
 let deadFor = 0;
 let killerName = '';
@@ -60,7 +67,8 @@ let shake = 0;
 let extraYaw = 0;
 let extraPitch = 0;
 
-const fighters = (): Hittable[] => (mode === 'range' ? dummies : [player, ...bots]);
+const fighters = (): Hittable[] => (mode === 'range' ? dummies : mode === 'waves' ? [player, ...monsters] : [player, ...bots]);
+const isPlaying = () => mode === 'range' || mode === 'match' || mode === 'waves';
 const projectiles = new Projectiles(scene, world, fighters);
 const spawnPoint = world.at(0, -45);
 
@@ -79,7 +87,7 @@ const actions: Actions = {
 const input = new Input(canvas, $('joystick-knob'), actions);
 
 addEventListener('keydown', (e) => {
-  if (mode !== 'range' && mode !== 'match') return;
+  if (!isPlaying()) return;
   if (e.code === 'Digit1') selectWeapon('rifle');
   if (e.code === 'Digit2') selectWeapon('bow');
   if (e.code === 'Digit3') selectWeapon('grenade');
@@ -131,7 +139,7 @@ for (const b of document.querySelectorAll<HTMLElement>('[data-mode]')) {
   b.addEventListener('click', () => {
     audio.unlock();
     const m = b.dataset.mode;
-    if (m === 'range' || m === 'match') start(m);
+    if (m === 'range' || m === 'match' || m === 'waves') start(m);
     else showMenu();
   });
 }
@@ -164,7 +172,7 @@ function reload() {
 
 function trigger(down: boolean, cancel = false) {
   audio.unlock();
-  if ((mode !== 'range' && mode !== 'match') || !player.alive) return;
+  if (!isPlaying() || !player.alive) return;
   const w = weapons[current];
   if (down && w.ammo === 0 && !w.reloading && current !== 'grenade') audio.play('empty');
   const shot = down ? w.triggerDown() : w.triggerUp(cancel);
@@ -253,6 +261,7 @@ function floater(p: THREE.Vector3, text: string, cls: string) {
 
 projectiles.onHit = (e: HitEvent) => {
   if (e.target instanceof Bot && e.owner) e.target.alert(e.owner.position);
+  projectiles.puff(e.point, e.target instanceof Monster ? 0x7bd23a : e.target instanceof TargetDummy ? 0xd9c8a0 : 0xd8342c, 5, 2);
   if (e.byPlayer && e.target !== player) {
     if (e.weapon !== 'grenade') stats.hits += 1;
     if (e.zone === 'head') stats.heads += 1;
@@ -261,13 +270,20 @@ projectiles.onHit = (e: HitEvent) => {
     floater(e.point, `${e.damage}`, e.killed ? 'kill' : e.zone === 'head' ? 'head' : '');
     audio.play(e.killed ? 'kill' : e.zone === 'head' ? 'head' : 'hit');
   }
-  if (e.target === player) {
-    $('vignette').style.opacity = '0.75';
-    audio.play('hurt');
-  }
+  if (e.target === player) playerHurt(e.owner && e.owner !== player ? e.owner.position : e.point);
   if (!e.killed) return;
   if (mode === 'range') {
     stats.kills += 1;
+    return;
+  }
+  if (mode === 'waves') {
+    if (e.target === player) playerDown();
+    else if (e.target instanceof Monster && e.byPlayer) {
+      const points = Math.round(e.target.def.score * (e.zone === 'head' ? 1.5 : 1));
+      waves.score += points;
+      stats.kills += 1;
+      floater(e.point.clone().setY(e.point.y + 0.5), `+${points}`, 'score');
+    }
     return;
   }
   const killer = e.owner;
@@ -280,12 +296,132 @@ projectiles.onHit = (e: HitEvent) => {
   const how = e.weapon === 'grenade' ? '💥' : e.weapon === 'bow' ? '🏹' : e.zone === 'head' ? '🎯' : '🔫';
   feed(`${nameOf(killer)} ${how} ${nameOf(e.target)}`, killer === player || e.target === player);
   if (e.target === player) {
-    deadFor = 0;
     killerName = killer === player ? '自己的手雷' : nameOf(killer);
-    weapons[current].triggerUp(true);
-    setAds(false);
+    playerDown();
   }
 };
+
+function playerDown() {
+  deadFor = 0;
+  weapons[current].triggerUp(true);
+  setAds(false);
+}
+
+// Red arcs around the crosshair point toward whoever hit the player.
+const indicators: Array<{ el: HTMLElement; from: THREE.Vector3; t: number }> = [];
+function playerHurt(from: THREE.Vector3) {
+  $('vignette').style.opacity = '0.75';
+  audio.play('hurt');
+  const el = document.createElement('div');
+  el.className = 'dir';
+  $('dirs').append(el);
+  indicators.push({ el, from: from.clone(), t: 0 });
+}
+
+function updateIndicators(dt: number) {
+  const fx = -Math.sin(player.yaw);
+  const fz = -Math.cos(player.yaw);
+  for (const ind of indicators) {
+    ind.t += dt;
+    const dx = ind.from.x - player.pos.x;
+    const dz = ind.from.z - player.pos.z;
+    const angle = Math.atan2(dx * -fz + dz * fx, dx * fx + dz * fz);
+    ind.el.style.transform = `rotate(${angle}rad)`;
+    ind.el.style.opacity = `${Math.max(0, 1 - ind.t / 1.4)}`;
+    if (ind.t > 1.4) ind.el.remove();
+  }
+  for (let i = indicators.length - 1; i >= 0; i--) if (indicators[i].t > 1.4) indicators.splice(i, 1);
+}
+
+// ---------- Monster waves ----------
+const monsterCtx: MonsterContext = {
+  world,
+  player,
+  rand,
+  get monsters() {
+    return monsters;
+  },
+  hurt: (amount, from) => {
+    if (!player.alive) return;
+    const killed = player.damage(amount);
+    if (player.shield > 0) return;
+    playerHurt(from);
+    shake = Math.max(shake, 0.4);
+    if (killed) playerDown();
+  },
+  spit: (shot, origin, dir, owner) => {
+    projectiles.fire(shot, origin, dir, owner, false);
+    audio.play('throw', owner.position.distanceTo(player.pos));
+  },
+};
+
+function spawnMonster(kind: MonsterKind) {
+  // Close enough to arrive soon, far enough to see them climb out of the ground.
+  const ok = (p: THREE.Vector3) => {
+    const d = p.distanceTo(player.pos);
+    return d > 16 && d < 34;
+  };
+  let at = world.randomOpenSpot(rand, 1.5, 38);
+  for (let i = 0; i < 25 && !ok(at); i++) at = world.randomOpenSpot(rand, 1.5, 38);
+  const m = new Monster(kind, at);
+  monsters.push(m);
+  scene.add(m.model.root);
+}
+
+function updateWaves(dt: number) {
+  for (const m of monsters) m.update(dt, monsterCtx);
+  monsters = monsters.filter((m) => {
+    if (m.removed) scene.remove(m.model.root);
+    return !m.removed;
+  });
+  if (!player.alive) {
+    deadFor += dt;
+    $('banner').textContent = '你倒下了';
+    if (deadFor > 2) endWaves();
+    return;
+  }
+  if (waves.breakLeft > 0) {
+    waves.breakLeft -= dt;
+    const cleared = waves.wave > 0 && waves.breakLeft > WAVE_BREAK - 2;
+    $('banner').textContent = cleared ? `第 ${waves.wave} 波完成！` : `第 ${waves.wave + 1} 波　${Math.ceil(waves.breakLeft)}`;
+    if (waves.breakLeft <= 0) {
+      waves.wave += 1;
+      waves.queue = waveRoster(waves.wave);
+      $('banner').textContent = '';
+    }
+    return;
+  }
+  waves.spawnCd -= dt;
+  const alive = monsters.filter((m) => m.alive).length;
+  if (waves.queue.length && waves.spawnCd <= 0 && alive < MAX_MONSTERS) {
+    spawnMonster(waves.queue.shift()!);
+    waves.spawnCd = Math.max(0.4, 1.3 - waves.wave * 0.1);
+  }
+  if (!waves.queue.length && alive === 0) waves.breakLeft = WAVE_BREAK;
+}
+
+function readBest(): number {
+  try {
+    return Number(localStorage.getItem(BEST_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function endWaves() {
+  const best = Math.max(readBest(), waves.score);
+  try {
+    localStorage.setItem(BEST_KEY, String(best));
+  } catch {
+    // storage unavailable: the best score just isn't kept
+  }
+  showSummary('你倒下了', [
+    ['撐到', `第 ${waves.wave} 波`],
+    ['擊倒', `${stats.kills}`],
+    ['分數', `${waves.score}`],
+    ['最高分', `${best}`],
+  ]);
+}
 projectiles.onImpact = (p) => audio.play('impact', p.distanceTo(player.pos));
 projectiles.onBlast = (p) => {
   const d = p.distanceTo(player.pos);
@@ -328,8 +464,12 @@ function clearMatch() {
   projectiles.clear();
   for (const d of dummies) scene.remove(d.model.root);
   for (const b of bots) scene.remove(b.model.root);
+  for (const m of monsters) scene.remove(m.model.root);
   dummies = [];
   bots = [];
+  monsters = [];
+  for (const ind of indicators) ind.el.remove();
+  indicators.length = 0;
   board.clear();
   $('feed').replaceChildren();
   $('floaters').replaceChildren();
@@ -343,7 +483,8 @@ function resetWeapons() {
   setAds(false);
 }
 
-function start(m: 'range' | 'match') {
+function start(m: PlayMode) {
+  lastMode = m;
   clearMatch();
   resetWeapons();
   mode = m;
@@ -351,6 +492,7 @@ function start(m: 'range' | 'match') {
   world.layout(m === 'range');
   document.body.classList.remove('in-menu');
   document.body.classList.toggle('range', m === 'range');
+  deadFor = 0;
   $('menu').classList.remove('show');
   $('summary').classList.remove('show');
   $('banner').textContent = '';
@@ -358,6 +500,9 @@ function start(m: 'range' | 'match') {
     player.spawn(spawnPoint, Math.PI);
     dummies = createRange(world, spawnPoint);
     for (const d of dummies) scene.add(d.model.root);
+  } else if (m === 'waves') {
+    Object.assign(waves, { wave: 0, queue: [], spawnCd: 0, breakLeft: 3, score: 0 });
+    player.spawn(world.randomOpenSpot(rand, 2, 6), Math.PI);
   } else {
     timeLeft = MATCH_TIME;
     player.spawn(farthestSpot(), Math.PI);
@@ -398,17 +543,33 @@ function showMenu() {
   $('menu').classList.add('show');
 }
 
+let lastMode: PlayMode = 'match';
+
 function endMatch() {
+  const rows = [...board.entries()].sort((a, b) => b[1].kills - a[1].kills || a[1].deaths - b[1].deaths);
+  showSummary(
+    '時間到',
+    rows.map(([, r], i) => [`${i + 1}`, r.name, `擊倒 ${r.kills}`, `倒下 ${r.deaths}`]),
+    rows.findIndex(([h]) => h === player),
+  );
+}
+
+function showSummary(title: string, rows: string[][], highlight = -1) {
   mode = 'summary';
   if (document.pointerLockElement) document.exitPointerLock();
   weapons[current].triggerUp(true);
   document.body.classList.add('in-menu');
-  const rows = [...board.entries()].sort((a, b) => b[1].kills - a[1].kills || a[1].deaths - b[1].deaths);
-  $('ranking').innerHTML =
-    '<tr><td></td><td></td><td>擊倒</td><td>倒下</td></tr>' +
-    rows
-      .map(([h, r], i) => `<tr class="${h === player ? 'me' : ''}"><td>${i + 1}</td><td>${r.name}</td><td>${r.kills}</td><td>${r.deaths}</td></tr>`)
-      .join('');
+  $('summary-title').textContent = title;
+  const table = $('ranking');
+  table.replaceChildren(
+    ...rows.map((cells, i) => {
+      const tr = document.createElement('tr');
+      if (i === highlight) tr.className = 'me';
+      for (const c of cells) tr.insertCell().textContent = c;
+      return tr;
+    }),
+  );
+  $('btn-again').dataset.mode = lastMode;
   $('summary').classList.add('show');
 }
 
@@ -431,6 +592,9 @@ function updateHud(dt: number) {
     $('score').textContent = `擊倒 ${me.kills}　倒下 ${me.deaths}`;
     const t = Math.max(0, Math.ceil(timeLeft));
     $('timer').textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+  } else if (mode === 'waves') {
+    $('score').textContent = `分數 ${waves.score}　擊倒 ${stats.kills}`;
+    $('timer').textContent = waves.wave ? `第 ${waves.wave} 波` : '';
   } else if (mode === 'range') {
     const acc = stats.shots ? Math.round((stats.hits / stats.shots) * 100) : 0;
     $('score').textContent = `命中 ${stats.hits}/${stats.shots}（${acc}%）　爆頭 ${stats.heads}　擊倒 ${stats.kills}`;
@@ -478,7 +642,7 @@ function frame(now: number) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  const playing = mode === 'range' || mode === 'match';
+  const playing = isPlaying();
   const f = input.sample();
   f.lookYaw += extraYaw;
   f.lookPitch += extraPitch;
@@ -497,7 +661,9 @@ function frame(now: number) {
     wasReloading = w.reloading;
     for (const d of dummies) d.update(dt);
     for (const b of bots) b.update(dt, botCtx);
-    projectiles.update(dt);
+    if (mode === 'waves') updateWaves(dt);
+    player.eye(camera.position);
+    projectiles.update(dt, camera.position);
 
     if (mode === 'match') {
       timeLeft -= dt;
@@ -524,6 +690,7 @@ function frame(now: number) {
     document.body.classList.toggle('ads-red', current === 'rifle' && adsAmount > 0.6);
     updateArc();
     updateHud(dt);
+    updateIndicators(dt);
   } else {
     // Menu backdrop: slow orbit over the arena.
     const a = now / 9000;
@@ -539,7 +706,20 @@ function frame(now: number) {
 }
 
 // Test hook for automated runs.
-(window as unknown as { arena: unknown }).arena = { start, player, weapons, trigger, selectWeapon, setAds, bots: () => bots, dummies: () => dummies, stats, STEP };
+(window as unknown as { arena: unknown }).arena = {
+  start,
+  player,
+  weapons,
+  trigger,
+  selectWeapon,
+  setAds,
+  bots: () => bots,
+  dummies: () => dummies,
+  monsters: () => monsters,
+  waves,
+  stats,
+  STEP,
+};
 
 showMenu();
 requestAnimationFrame(frame);

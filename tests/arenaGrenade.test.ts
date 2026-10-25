@@ -41,7 +41,7 @@ describe('arena projectiles', () => {
     const origin = from.clone().setY(from.y + 1.6);
     // Aim 0.45 rad up: lands about 28 m out.
     sys.fire({ weapon: WEAPONS.grenade, power: 1 }, origin, new THREE.Vector3(0, Math.sin(0.45), Math.cos(0.45)), null, true);
-    for (let i = 0; i < 200; i++) sys.update(1 / 60);
+    for (let i = 0; i < 200; i++) sys.update(1 / 60, new THREE.Vector3());
     expect(hits.length).toBe(1);
     expect(target.hp).toBeLessThan(80);
   });
@@ -55,7 +55,7 @@ describe('arena projectiles', () => {
     const origin = from.clone().setY(from.y + 1.6);
     const aim = target.position.clone().setY(target.position.y + 1.2).sub(origin).normalize();
     sys.fire({ weapon: WEAPONS.rifle, power: 1 }, origin, aim, null, true);
-    for (let i = 0; i < 30; i++) sys.update(1 / 60);
+    for (let i = 0; i < 30; i++) sys.update(1 / 60, new THREE.Vector3());
     expect(zones).toEqual(['torso']);
   });
 });

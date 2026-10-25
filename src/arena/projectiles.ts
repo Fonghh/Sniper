@@ -3,10 +3,12 @@ import createFireball, { VFXHandle } from '../vfx/fireball';
 import type { Zone } from './hitbox';
 import { ProjectileState, STEP, stepProjectile } from './projectile';
 import type { Hittable } from './targets';
-import { Shot, WeaponId, hitDamage, launchSpeed } from './weapons';
+import { Trail } from './trails';
+import { ProjectileKind, Shot, hitDamage, launchSpeed } from './weapons';
 import type { ArenaWorld } from './world';
 
-// Live projectiles: rifle tracers, arrows that stick, grenades that bounce and explode.
+// Live projectiles: rifle tracers, arrows that stick, grenades that bounce and explode,
+// spitter acid. Each leaves a fading flight-path ribbon and an impact mark where it lands.
 // Everything advances in the same fixed steps as the pure physics module.
 
 export interface HitEvent {
@@ -15,7 +17,7 @@ export interface HitEvent {
   damage: number;
   killed: boolean;
   point: THREE.Vector3;
-  weapon: WeaponId;
+  weapon: ProjectileKind;
   owner: Hittable | null;
   byPlayer: boolean;
 }
@@ -30,6 +32,8 @@ interface Live {
   done: boolean;
   stuck: number; // arrows: seconds left stuck in a surface
   resting: boolean; // grenades: stopped rolling
+  trail: Trail;
+  steps: number;
 }
 
 interface Effect {
@@ -41,6 +45,9 @@ const MAX_FLIGHT = 4; // s
 const RESTITUTION = 0.35;
 const ARROW_STICK = 8; // s
 const TRACER_HIDE = 3; // m: keep the tracer from flashing across the camera
+const TRAIL_EVERY = 3; // physics steps per trail sample
+const TRAIL_START = 2.5; // m: the first stretch would smear across the whole view
+const MAX_DECALS = 60;
 
 const tracerGeo = new THREE.BoxGeometry(0.035, 0.035, 2.4).translate(0, 0, -1.2);
 const playerTracer = new THREE.MeshBasicMaterial({ color: 0xffe066 });
@@ -63,13 +70,28 @@ function arrowMesh(): THREE.Group {
 
 const grenadeGeo = new THREE.IcosahedronGeometry(0.08, 0);
 const grenadeMat = new THREE.MeshLambertMaterial({ color: 0x4f8f3a, flatShading: true });
+const acidGeo = new THREE.IcosahedronGeometry(0.16, 1);
+const acidMat = new THREE.MeshBasicMaterial({ color: 0x9dff3a });
+const decalGeo = new THREE.CircleGeometry(0.09, 8);
+const decalMat = new THREE.MeshBasicMaterial({
+  color: 0x2a2620,
+  transparent: true,
+  opacity: 0.75,
+  depthWrite: false,
+  polygonOffset: true,
+  polygonOffsetFactor: -2,
+});
+const trailStyle = (kind: ProjectileKind, byPlayer: boolean): [number, number, number] =>
+  kind === 'acid' ? [0x9dff3a, 0.55, 0.8] : byPlayer ? [0xfff2a8, 0.8, 1.6] : [0xff4a3a, 0.5, 0.8];
 
 export class Projectiles {
   private live: Live[] = [];
   private effects: Effect[] = [];
+  private trails: Trail[] = [];
+  private decals: THREE.Mesh[] = [];
   private acc = 0;
   onHit: (e: HitEvent) => void = () => {};
-  onImpact: (p: THREE.Vector3, weapon: WeaponId) => void = () => {};
+  onImpact: (p: THREE.Vector3, weapon: ProjectileKind) => void = () => {};
   onBlast: (p: THREE.Vector3) => void = () => {};
 
   constructor(
@@ -85,13 +107,19 @@ export class Projectiles {
       mesh = new THREE.Mesh(tracerGeo, byPlayer ? playerTracer : enemyTracer);
       mesh.visible = false;
     } else if (shot.weapon.id === 'bow') mesh = arrowMesh();
+    else if (shot.weapon.id === 'acid') mesh = new THREE.Mesh(acidGeo, acidMat);
     else {
       mesh = new THREE.Mesh(grenadeGeo, grenadeMat);
       mesh.castShadow = true;
     }
     mesh.position.copy(origin);
     this.scene.add(mesh);
+    const trail = new Trail(...trailStyle(shot.weapon.id, byPlayer));
+    this.trails.push(trail);
+    this.scene.add(trail.mesh);
     this.live.push({
+      trail,
+      steps: 0,
       shot,
       state: { pos: { x: origin.x, y: origin.y, z: origin.z }, vel: { x: v.x, y: v.y, z: v.z }, time: 0 },
       owner,
@@ -104,7 +132,7 @@ export class Projectiles {
     });
   }
 
-  update(dt: number) {
+  update(dt: number, camera: THREE.Vector3) {
     this.acc = Math.min(this.acc + dt, 0.1);
     const steps = Math.floor(this.acc / STEP);
     this.acc -= steps * STEP;
@@ -128,8 +156,19 @@ export class Projectiles {
       }
     }
     this.live = this.live.filter((p) => {
-      if (p.done) this.scene.remove(p.mesh);
+      if (p.done) {
+        this.scene.remove(p.mesh);
+        p.trail.finish();
+      }
       return !p.done;
+    });
+    this.trails = this.trails.filter((t) => {
+      const keep = t.update(dt, camera);
+      if (!keep) {
+        this.scene.remove(t.mesh);
+        t.dispose();
+      }
+      return keep;
     });
     this.effects = this.effects.filter((e) => {
       const keep = e.update(dt);
@@ -160,6 +199,7 @@ export class Projectiles {
           if (v.length() < 0.6 && n.y > 0.5) p.resting = true;
         }
         p.state = next;
+        if (++p.steps % TRAIL_EVERY === 0 || hit) this.sample(p, next.pos);
       } else p.state = { ...p.state, time: p.state.time + STEP };
       if (p.state.time >= w.fuse) this.explode(p, targets);
       return;
@@ -169,7 +209,7 @@ export class Projectiles {
     let best: { target: Hittable; zone: Zone; t: number } | null = null;
     const reach = Math.hypot(next.pos.x - a.x, next.pos.z - a.z) + 2;
     for (const t of targets) {
-      if (t === p.owner || !t.alive) continue;
+      if (t === p.owner || !t.alive || (t.team && t.team === p.owner?.team)) continue;
       const dx = t.position.x - a.x;
       const dz = t.position.z - a.z;
       if (dx * dx + dz * dz > reach * reach) continue;
@@ -181,14 +221,18 @@ export class Projectiles {
     if (best) {
       const damage = hitDamage(p.shot, best.zone === 'head');
       const killed = best.target.damage(damage, best.zone);
-      this.onHit({ target: best.target, zone: best.zone, damage, killed, point: at(best.t), weapon: w.id, owner: p.owner, byPlayer: p.byPlayer });
+      const point = at(best.t);
+      this.sample(p, point);
+      this.onHit({ target: best.target, zone: best.zone, damage, killed, point, weapon: w.id, owner: p.owner, byPlayer: p.byPlayer });
       p.done = true;
       return;
     }
     if (wall) {
       const point = at(wall.t);
+      this.sample(p, point);
       this.onImpact(point, w.id);
-      this.puff(point, w.id === 'bow' ? 0xc8b48a : 0xe8e0cc);
+      this.puff(point, w.id === 'acid' ? 0x9dff3a : w.id === 'bow' ? 0xc8b48a : 0xe8e0cc);
+      if (w.id !== 'acid') this.decal(point, wall.normal);
       if (w.id === 'bow') {
         p.stuck = ARROW_STICK;
         p.mesh.position.copy(point);
@@ -197,6 +241,7 @@ export class Projectiles {
       return;
     }
     p.state = next;
+    if (++p.steps % TRAIL_EVERY === 0) this.sample(p, next.pos);
     if (next.time > MAX_FLIGHT || next.pos.y < -50) p.done = true;
   }
 
@@ -252,6 +297,23 @@ export class Projectiles {
     this.puff(c, 0x9a8f80, 18, 5);
   }
 
+  private sample(p: Live, at: { x: number; y: number; z: number }) {
+    const dx = at.x - p.start.x;
+    const dy = at.y - p.start.y;
+    const dz = at.z - p.start.z;
+    if (dx * dx + dy * dy + dz * dz > TRAIL_START * TRAIL_START) p.trail.add(at);
+  }
+
+  /** A dark mark where a shot struck, so misses are easy to read. */
+  private decal(p: THREE.Vector3, normal: THREE.Vector3) {
+    const m = new THREE.Mesh(decalGeo, decalMat);
+    m.position.copy(p).addScaledVector(normal, 0.01);
+    m.lookAt(m.position.clone().add(normal));
+    this.scene.add(m);
+    this.decals.push(m);
+    if (this.decals.length > MAX_DECALS) this.scene.remove(this.decals.shift()!);
+  }
+
   /** Small chunky debris burst. */
   puff(p: THREE.Vector3, color: number, count = 6, speed = 2.5) {
     const mat = new THREE.MeshLambertMaterial({ color, transparent: true });
@@ -286,7 +348,14 @@ export class Projectiles {
   clear() {
     for (const p of this.live) this.scene.remove(p.mesh);
     for (const e of this.effects) e.dispose();
+    for (const t of this.trails) {
+      this.scene.remove(t.mesh);
+      t.dispose();
+    }
+    for (const d of this.decals) this.scene.remove(d);
     this.live = [];
     this.effects = [];
+    this.trails = [];
+    this.decals = [];
   }
 }

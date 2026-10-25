@@ -76,3 +76,11 @@ body.touch #joystick { display: block; }
 body.in-menu #top, body.in-menu #slots, body.in-menu #ammo, body.in-menu .round, body.in-menu #hp, body.in-menu #crosshair, body.in-menu #joystick { display: none; }
 body.range #timer { display: none; }
 body.ads-red #crosshair { display: none; }
+#dirs { position: absolute; left: 50%; top: 50%; pointer-events: none; }
+.dir { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.dir::before {
+  content: ''; position: absolute; left: -55px; top: -125px; width: 110px; height: 34px;
+  border-top: 7px solid rgba(255, 40, 30, 0.95); border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  filter: drop-shadow(0 0 4px rgba(255, 0, 0, 0.9));
+}
+.dmg.score { color: #7dff6a; font-size: 18px; }

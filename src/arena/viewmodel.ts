@@ -139,9 +139,10 @@ export class Viewmodel {
       this.rifle.flash.rotation.z = Math.random() * 6;
     } else if (this.weapon === 'bow') {
       const g = this.bow.group;
-      g.position.set(lerp(0.02, 0) + bx, lerp(-0.07, -0.05) + by - lower, -0.45 + this.recoil * 0.03);
-      g.rotation.set(0, 0, lerp(-0.25, -0.08));
-      const nock = 0.02 + s.draw * 0.34;
+      // Aiming tucks the bow low-left and cants it, keeping the centre of the view clear.
+      g.position.set(lerp(0.06, -0.075) + bx, lerp(-0.08, -0.1) + by - lower, -0.45 + this.recoil * 0.03);
+      g.rotation.set(0, lerp(0, 0.12), lerp(0.25, 0.65));
+      const nock = 0.02 + s.draw * 0.26;
       const pts = this.bow.string.geometry.getAttribute('position') as THREE.BufferAttribute;
       pts.setXYZ(0, 0, 0.3, 0);
       pts.setXYZ(1, 0, 0, nock);

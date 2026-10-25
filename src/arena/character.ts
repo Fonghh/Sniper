@@ -9,6 +9,7 @@ export interface CharacterLook {
   head: number;
   accent?: number; // chest marking (e.g. a bullseye on dummies)
   gun?: boolean;
+  eyes?: number; // glowing eye colour (monsters)
 }
 
 export interface CharacterModel {
@@ -40,7 +41,7 @@ export function createCharacter(look: CharacterLook): CharacterModel {
   body.add(head);
   // Eyes give a facing direction (+z).
   for (const s of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.02), new THREE.MeshBasicMaterial({ color: 0x1b1b1b }));
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.02), new THREE.MeshBasicMaterial({ color: look.eyes ?? 0x1b1b1b }));
     eye.position.set(s * 0.055, HEAD.c.y + 0.02, HEAD.c.z + HEAD.r - 0.005);
     body.add(eye);
   }
