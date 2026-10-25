@@ -100,6 +100,7 @@ export const STRINGS = {
     gyroAim: ['陀螺儀瞄準', '傾斜手機微調準星（開鏡時）'],
     haptics: ['震動回饋', '開火、歸零切換時震動'],
     invertY: ['反轉上下', '手指往下拖時往上看'],
+    fireball: ['火球子彈', '子彈換成火球特效（關閉為普通子彈）'],
   } as Record<string, string | [string, string]>,
   records: {
     title: '擊殺紀錄',

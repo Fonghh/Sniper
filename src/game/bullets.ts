@@ -3,11 +3,20 @@ import type { Ammo } from '../ballistics/ammo';
 import { BulletState, DEFAULT_STEP, FlightEnv, stepBullet } from '../ballistics/ballistics';
 import type { Deer, DeerHit } from '../animals/deer';
 import { length, vec3 } from '../core/vec3';
+import createFireball, { VFXHandle } from '../vfx/fireball';
 import { HALF_MAP, Terrain } from '../world/terrain';
+
+/** World scale of the fireball VFX: its model is ~4 m long, so this makes it ~1.2 m. */
+export const FIREBALL_SCALE = 0.3;
 import type { Target, TargetHit } from './targets';
 
 const MAX_FLIGHT = 3; // s
 const TRAIL_LIFE = 1.6; // s the tracer stays visible after impact
+/**
+ * Ground is ignored for the first metres of flight: lying prone on a slope puts the muzzle
+ * within centimetres of the ground, where a real rifle would rest over the lip.
+ */
+const MUZZLE_CLEARANCE = 2; // m
 
 export type Impact =
   | { kind: 'animal'; deer: Deer; hit: DeerHit; range: number; time: number }
@@ -19,6 +28,7 @@ export type Impact =
 /** Read-only view of a bullet in flight, for the bullet camera. */
 export interface BulletHandle {
   readonly mesh: THREE.Object3D;
+  readonly fireball: boolean;
   readonly position: THREE.Vector3;
   readonly velocity: THREE.Vector3;
   readonly done: boolean;
@@ -26,6 +36,8 @@ export interface BulletHandle {
 
 interface LiveBullet {
   mesh: THREE.Mesh;
+  /** Optional fireball visual that follows the bullet and bursts on impact. */
+  fx: VFXHandle | null;
   ammo: Ammo;
   state: BulletState;
   origin: THREE.Vector3;
@@ -55,6 +67,8 @@ export class BulletSystem {
   private bullets: LiveBullet[] = [];
   private puffs: Puff[] = [];
   private now = 0; // world time of the current update, stamped on animal hits
+  /** Bullet appearance: a plain round, or the fireball effect. */
+  fireball = false;
   private bulletGeo = new THREE.CylinderGeometry(0.004, 0.0078, 0.03, 8).rotateX(Math.PI / 2);
   private bulletMat = new THREE.MeshLambertMaterial({ color: 0xc89b4a, emissive: 0x3a2a10 });
   private trailMat = new THREE.LineBasicMaterial({ color: 0xfff6c8, transparent: true, opacity: 0.7 });
@@ -81,7 +95,7 @@ export class BulletSystem {
       const a = toV3(s.pos);
       const c = toV3(next.pos);
       for (const deer of this.animals) if (deer.probe(a, c)) return { deer, range: c.distanceTo(origin) };
-      if (next.pos.y < this.terrain.height(next.pos.x, next.pos.z)) return null;
+      if (c.distanceTo(origin) > MUZZLE_CLEARANCE && next.pos.y < this.terrain.height(next.pos.x, next.pos.z)) return null;
       s = next;
     }
     return null;
@@ -101,18 +115,32 @@ export class BulletSystem {
     mesh.position.copy(origin);
     mesh.lookAt(origin.clone().add(d));
     this.scene.add(mesh);
-    const live: LiveBullet = { mesh, ammo, state, origin: origin.clone(), trail: [origin.clone()], line, done: false, fade: TRAIL_LIFE, passed: new Set() };
+    let fx: VFXHandle | null = null;
+    if (this.fireball) {
+      fx = createFireball();
+      fx.group.scale.setScalar(FIREBALL_SCALE);
+      fx.group.position.copy(origin);
+      fx.group.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), d);
+      this.scene.add(fx.group);
+      mesh.visible = false;
+    }
+    const live: LiveBullet = { mesh, fx, ammo, state, origin: origin.clone(), trail: [origin.clone()], line, done: false, fade: TRAIL_LIFE, passed: new Set() };
     this.bullets.push(live);
+    // With a fireball, the cam follows the flame and treats its burst as the end of the flight.
+    const burst = () => live.fx !== null && live.fx.phase !== 'starting' && live.fx.phase !== 'active';
     return {
       mesh,
       get position() {
-        return live.mesh.position;
+        return live.fx ? live.fx.group.position : live.mesh.position;
       },
       get velocity() {
         return toV3(live.state.vel);
       },
       get done() {
-        return live.done;
+        return live.done || burst();
+      },
+      get fireball() {
+        return live.fx !== null;
       },
     };
   }
@@ -120,6 +148,7 @@ export class BulletSystem {
   /** Removes every bullet, tracer and puff (end of a hunt). */
   clear() {
     for (const b of this.bullets) {
+      b.fx?.dispose();
       this.scene.remove(b.line, b.mesh);
       b.line.geometry.dispose();
     }
@@ -135,6 +164,7 @@ export class BulletSystem {
       if (b.done) {
         b.fade -= dt;
         (b.line.material as THREE.LineBasicMaterial).opacity = 0.7 * Math.max(b.fade / TRAIL_LIFE, 0);
+        b.fx?.update(dt);
         continue;
       }
       const target = b.state.time + dt;
@@ -144,6 +174,7 @@ export class BulletSystem {
         b.state = next;
         if (!b.done && (b.state.time > MAX_FLIGHT || Math.abs(next.pos.x) > HALF_MAP || Math.abs(next.pos.z) > HALF_MAP)) {
           b.done = true;
+          b.fx?.stop();
           if (!quiet(b)) this.onImpact({ kind: 'lost' });
         }
       }
@@ -151,13 +182,21 @@ export class BulletSystem {
         b.trail.push(toV3(b.state.pos));
         b.mesh.position.copy(toV3(b.state.pos));
         b.mesh.lookAt(b.mesh.position.clone().add(toV3(b.state.vel)));
+        // Follow the bullet until the fireball bursts; the burst then stays where it happened.
+        if (b.fx && (b.fx.phase === 'starting' || b.fx.phase === 'active')) {
+          // The effect's forward axis is +x.
+          b.fx.group.position.copy(b.mesh.position);
+          b.fx.group.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), toV3(b.state.vel).normalize());
+        }
       } else {
         b.mesh.visible = false;
       }
+      b.fx?.update(dt);
       b.line.geometry.setFromPoints(b.trail);
     }
     this.bullets = this.bullets.filter((b) => {
-      if (b.fade > 0) return true;
+      if (b.fade > 0 || (b.fx && !b.fx.finished)) return true;
+      b.fx?.dispose();
       this.scene.remove(b.line, b.mesh);
       b.line.geometry.dispose();
       return false;
@@ -198,6 +237,8 @@ export class BulletSystem {
       }
       const { hit } = res;
       b.passed.add(deer);
+      // The fireball bursts on the animal even if the bullet itself passes through.
+      b.fx?.hit(hit.entryWorld);
       b.trail.push(hit.entryWorld.clone());
       this.spawnPuff(hit.entryWorld, 0x9b1b1b, 0.25);
       this.onImpact({ kind: 'animal', deer, hit, range: hit.range, time: next.time });
@@ -224,7 +265,7 @@ export class BulletSystem {
         return next;
       }
     }
-    if (next.pos.y < this.terrain.height(next.pos.x, next.pos.z)) {
+    if (c.distanceTo(b.origin) > MUZZLE_CLEARANCE && next.pos.y < this.terrain.height(next.pos.x, next.pos.z)) {
       // Bisect for the ground contact point.
       let lo = 0;
       let hi = 1;
@@ -244,7 +285,8 @@ export class BulletSystem {
   private finish(b: LiveBullet, point: THREE.Vector3, color: number) {
     b.done = true;
     b.trail.push(point);
-    this.spawnPuff(point, color, 0.35);
+    if (b.fx) b.fx.hit(point);
+    else this.spawnPuff(point, color, 0.35);
   }
 
   private spawnPuff(point: THREE.Vector3, color: number, size: number) {

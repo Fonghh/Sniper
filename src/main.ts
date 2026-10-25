@@ -173,6 +173,7 @@ function startHunt() {
   herdAI = new Herd(herd, terrain, mulberry32(huntSeed + 1));
   signView = new SignView(scene, terrain, herdAI.signs);
   bullets = new BulletSystem(scene, terrain, targets, herd, flightEnv, onImpact);
+  bullets.fireball = settings.fireball;
 
   elapsed = 0;
   tracking = false;
@@ -310,6 +311,7 @@ mapView.onTravel = (l) => {
 function applySettings() {
   windArrow.style.visibility = settings.windArrow ? 'visible' : 'hidden';
   input.invertY = settings.invertY;
+  if (bullets) bullets.fireball = settings.fireball;
   input.setGyro(settings.gyroAim);
 }
 applySettings();
@@ -389,7 +391,7 @@ let bulletCam: { bullet: BulletHandle; hold: number; wasScoped: boolean } | null
 
 function startBulletCam(bullet: BulletHandle) {
   bulletCam = { bullet, hold: BULLET_CAM_HOLD, wasScoped: player.scoped };
-  bullet.mesh.scale.setScalar(3); // a real bullet is too small to read on a phone
+  if (!bullet.fireball) bullet.mesh.scale.setScalar(3); // a real bullet is too small to read on a phone
   player.stability.endHold();
   document.body.classList.add('bulletcam');
   camera.clearViewOffset();
@@ -428,6 +430,12 @@ function placeBulletCam() {
   const v = cam.bullet.velocity.clone().normalize();
   const side = new THREE.Vector3().crossVectors(v, up).normalize();
   // Portrait view is only ~±9° wide, so stay nearly in line with the bullet to keep it in frame.
+  if (cam.bullet.fireball) {
+    // Three-quarter rear view aimed at the fireball, so the stretched flame reads as a shape.
+    camera.position.copy(cam.bullet.position).addScaledVector(v, -1.6).addScaledVector(side, 0.75).addScaledVector(up, 0.45);
+    camera.lookAt(cam.bullet.position.clone().addScaledVector(v, 0.25));
+    return;
+  }
   camera.position.copy(cam.bullet.position).addScaledVector(v, -0.6).addScaledVector(side, 0.03).addScaledVector(up, 0.08);
   camera.lookAt(cam.bullet.position.clone().addScaledVector(v, 1.5));
 }
