@@ -18,7 +18,7 @@ import { BowView } from './viewmodel';
 // The dodge button dashes the way the stick points, invulnerable while dashing.
 
 const SEED = 11;
-const MOVE_SPEED = 5.5; // m/s
+const MOVE_SPEED = 5.5; // m/s (default; adjustable in the pause menu)
 const EYE = 1.6;
 const LOOK = 0.0048; // rad per px (touch)
 const MOUSE = 0.0024;
@@ -66,7 +66,7 @@ const player = {
 };
 let zone: Zone | null = null; // the clearing being fought (or just cleared)
 let advancing = false; // gate open, walking to the next clearing
-type State = 'menu' | 'fight' | 'cards' | 'over';
+type State = 'menu' | 'fight' | 'cards' | 'paused' | 'over';
 let state: State = 'menu';
 let taken: Taken = {};
 let stats = bowStats(taken);
@@ -86,6 +86,7 @@ const counted = new Set<Enemy>();
 
 // ---------- Input ----------
 const input = { x: 0, y: 0, firing: false, yaw: 0, pitch: 0 };
+const settings = { move: MOVE_SPEED, aim: 1 }; // loaded from storage with the pause menu below
 let dodgeRequested = false;
 const keys = new Set<string>();
 const isTouch = matchMedia('(pointer: coarse)').matches;
@@ -106,14 +107,25 @@ touch.addEventListener('pointerdown', (e) => {
     return;
   }
   const r = touch.getBoundingClientRect();
-  touch.setPointerCapture(e.pointerId);
-  if (e.clientX < r.left + r.width * 0.45 && stickId === null) {
+  // Capture can throw if the browser has already dropped the pointer (a very quick tap):
+  // never let that stop the touch from being assigned below.
+  try {
+    touch.setPointerCapture(e.pointerId);
+  } catch {
+    // keep going without capture
+  }
+  // The side of the screen decides the role. A new touch always takes the role over, so a
+  // finger whose release was never delivered (an overlay popped up under it) can't leave
+  // the stick stuck or turn a left-hand touch into aiming.
+  if (e.clientX < r.left + r.width * 0.45) {
     stickId = e.pointerId;
+    input.x = input.y = 0;
+    knob.style.transform = '';
     stickOrigin = { x: e.clientX, y: e.clientY };
     stick.style.left = `${e.clientX - r.left - 60}px`;
     stick.style.top = `${e.clientY - r.top - 60}px`;
     stick.style.bottom = 'auto';
-  } else if (aimId === null) {
+  } else {
     aimId = e.pointerId;
     aimLast = { x: e.clientX, y: e.clientY };
     input.firing = true;
@@ -133,8 +145,8 @@ touch.addEventListener('pointermove', (e) => {
     input.y = -dy / 50;
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
   } else if (e.pointerId === aimId) {
-    input.yaw -= (e.clientX - aimLast.x) * LOOK * 1.2;
-    input.pitch -= (e.clientY - aimLast.y) * LOOK;
+    input.yaw -= (e.clientX - aimLast.x) * LOOK * settings.aim * 1.2;
+    input.pitch -= (e.clientY - aimLast.y) * LOOK * settings.aim;
     aimLast = { x: e.clientX, y: e.clientY };
   }
 });
@@ -155,13 +167,24 @@ const release = (e: PointerEvent) => {
 };
 touch.addEventListener('pointerup', release);
 touch.addEventListener('pointercancel', release);
+touch.addEventListener('lostpointercapture', release);
+
+/** Forgets every finger (called whenever an overlay takes over the screen). */
+function resetTouches() {
+  stickId = aimId = null;
+  input.x = input.y = 0;
+  input.firing = false;
+  knob.style.transform = '';
+  stick.style.left = stick.style.top = stick.style.bottom = '';
+  keys.clear();
+}
 addEventListener('mouseup', () => {
   if (!isTouch) input.firing = false;
 });
 addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== canvas) return;
-  input.yaw -= e.movementX * MOUSE * 1.2;
-  input.pitch -= e.movementY * MOUSE;
+  input.yaw -= e.movementX * MOUSE * settings.aim * 1.2;
+  input.pitch -= e.movementY * MOUSE * settings.aim;
 });
 $('btn-dodge').addEventListener('pointerdown', (e) => {
   e.preventDefault();
@@ -171,7 +194,7 @@ $('btn-dodge').addEventListener('pointerdown', (e) => {
 addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'Space' || e.code === 'ShiftLeft') dodgeRequested = true;
-  if (e.code === 'Escape') showMenu();
+  if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
@@ -300,6 +323,7 @@ const enemyArrowGeo = new THREE.BoxGeometry(0.05, 0.05, 0.8).translate(0, 0, -0.
 const enemyArrowMat = new THREE.MeshBasicMaterial({ color: 0xff3b30 });
 const playerVel = new THREE.Vector3();
 const lastPos = new THREE.Vector3();
+let eyeY = EYE;
 
 // A bobbing arrow over the open gate pointing the way on.
 const marker = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.4, 4).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffd23c }));
@@ -308,7 +332,7 @@ scene.add(marker);
 
 /** An archer looses at the player, leading them a little and allowing for drop, not perfectly. */
 function shoot(from: THREE.Vector3, damage: number) {
-  const chest = player.pos.clone().setY(1.1);
+  const chest = player.pos.clone().setY(player.pos.y + 1.1);
   const d = chest.distanceTo(from);
   const tof = d / ENEMY_ARROW_SPEED;
   const aim = chest.addScaledVector(playerVel, tof * 0.7);
@@ -329,7 +353,7 @@ function updateEnemyArrows(dt: number) {
   enemyArrowAcc = Math.min(enemyArrowAcc + dt, 0.1);
   const steps = Math.floor(enemyArrowAcc / STEP);
   enemyArrowAcc -= steps * STEP;
-  const chest = player.pos.clone().setY(1.0);
+  const chest = player.pos.clone().setY(player.pos.y + 1.0);
   const seg = new THREE.Line3();
   const closest = new THREE.Vector3();
   for (const a of enemyArrows) {
@@ -477,7 +501,7 @@ function showCards() {
   cleared = wave;
   setRank();
   state = 'cards';
-  input.firing = false;
+  resetTouches();
   const row = $('card-row');
   row.replaceChildren(
     ...drawCards(taken, rand).map((id) => {
@@ -507,6 +531,7 @@ function pick(id: SkillId) {
   stats = bowStats(taken);
   view.crossbowMode = stats.crossbow;
   renderSkills();
+  resetTouches();
   $('cards').classList.remove('show');
   audio.play('reload');
   // Open the way forward.
@@ -556,7 +581,8 @@ function start() {
   $('rank').textContent = '';
   setRank();
   document.body.classList.remove('in-menu');
-  for (const id of ['menu', 'over', 'cards']) $(id).classList.remove('show');
+  for (const id of ['menu', 'over', 'cards', 'pause']) $(id).classList.remove('show');
+  resetTouches();
   startWave();
 }
 
@@ -565,14 +591,15 @@ function showMenu() {
   clearAll();
   state = 'menu';
   document.body.classList.add('in-menu');
-  for (const id of ['over', 'cards']) $(id).classList.remove('show');
+  for (const id of ['over', 'cards', 'pause']) $(id).classList.remove('show');
+  resetTouches();
   $('menu').classList.add('show');
 }
 
 function gameOver() {
   state = 'over';
   if (document.pointerLockElement) document.exitPointerLock();
-  input.firing = false;
+  resetTouches();
   let best = 0;
   try {
     best = Math.max(Number(localStorage.getItem(BEST_KEY)) || 0, score);
@@ -594,7 +621,61 @@ function gameOver() {
 $('btn-start').addEventListener('click', start);
 $('btn-again').addEventListener('click', start);
 $('btn-back').addEventListener('click', showMenu);
-$('btn-menu').addEventListener('click', showMenu);
+$('btn-menu').addEventListener('click', () => togglePause());
+$('btn-resume').addEventListener('click', () => togglePause());
+$('btn-quit').addEventListener('click', showMenu);
+
+// ---------- Pause and settings ----------
+const SETTINGS_KEY = 'archer.settings';
+function loadSettings(): { move: number; aim: number } {
+  try {
+    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}');
+    return { move: Number(s.move) || MOVE_SPEED, aim: Number(s.aim) || 1 };
+  } catch {
+    return { move: MOVE_SPEED, aim: 1 };
+  }
+}
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // storage unavailable: settings last for this visit only
+  }
+}
+const formats = { move: (v: number) => `${v.toFixed(1)} m/s`, aim: (v: number) => `${v.toFixed(2)}×` };
+function showSetting(key: 'move' | 'aim') {
+  $<HTMLInputElement>(`set-${key}`).value = String(settings[key]);
+  $(`set-${key}-val`).textContent = formats[key](settings[key]);
+}
+Object.assign(settings, loadSettings());
+for (const key of ['move', 'aim'] as const) {
+  showSetting(key);
+  $<HTMLInputElement>(`set-${key}`).addEventListener('input', (e) => {
+    settings[key] = Number((e.target as HTMLInputElement).value);
+    showSetting(key);
+    saveSettings();
+  });
+}
+$('btn-reset-settings').addEventListener('click', () => {
+  settings.move = MOVE_SPEED;
+  settings.aim = 1;
+  saveSettings();
+  showSetting('move');
+  showSetting('aim');
+});
+
+function togglePause() {
+  if (state === 'fight') {
+    state = 'paused';
+    resetTouches();
+    if (document.pointerLockElement) document.exitPointerLock();
+    $('pause').classList.add('show');
+  } else if (state === 'paused') {
+    state = 'fight';
+    resetTouches();
+    $('pause').classList.remove('show');
+  }
+}
 
 // ---------- Loop ----------
 function resize() {
@@ -651,8 +732,8 @@ function updatePlayer(dt: number) {
     player.dash -= dt;
     player.pos.addScaledVector(player.dashDir, DASH_SPEED * dt);
   } else {
-    player.pos.x += wx * MOVE_SPEED * dt;
-    player.pos.z += wz * MOVE_SPEED * dt;
+    player.pos.x += wx * settings.move * dt;
+    player.pos.z += wz * settings.move * dt;
   }
   world.resolve(player.pos, 0.35);
   playerVel.copy(player.pos).sub(lastPos).divideScalar(Math.max(dt, 1e-4));
@@ -746,8 +827,10 @@ function frame(now: number) {
   const dt = hitStop > 0 ? real * 0.06 : real;
   if (state === 'fight') tick(dt);
   if (state !== 'menu') {
-    fx.update(dt);
-    camera.position.copy(player.pos).setY(player.pos.y + EYE);
+    fx.update(state === 'fight' ? dt : 0); // effects freeze while paused or picking a card
+    // Ease the view up and down when climbing over low cover.
+    eyeY += (player.pos.y + EYE - eyeY) * Math.min(1, real * 12);
+    camera.position.copy(player.pos).setY(eyeY);
     // A quick widening of the view while dashing.
     camera.fov += ((player.dash > 0 ? 82 : 70) - camera.fov) * Math.min(1, real * 12);
     camera.updateProjectionMatrix();

@@ -32,6 +32,20 @@
         <div class="pick">選一個技能</div>
         <div id="card-row"></div>
       </div>
+      <div id="pause" class="overlay">
+        <h1>暫停</h1>
+        <div class="settings">
+          <label>人物移動速度 <b id="set-move-val"></b>
+            <input id="set-move" type="range" min="2.5" max="10" step="0.5" />
+          </label>
+          <label>瞄準轉向速度（右手拖曳） <b id="set-aim-val"></b>
+            <input id="set-aim" type="range" min="0.3" max="3" step="0.05" />
+          </label>
+          <button class="btn" id="btn-reset-settings">恢復預設</button>
+        </div>
+        <button class="btn wide" id="btn-resume">繼續</button>
+        <button class="btn wide" id="btn-quit">回選單</button>
+      </div>
       <div id="menu" class="overlay show">
         <h1>弓箭英雄</h1>
         <p class="sub">一波一波的怪物衝過來，箭會飛出弧線往下掉</p>

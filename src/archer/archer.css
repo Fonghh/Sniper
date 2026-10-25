@@ -77,3 +77,8 @@ body.in-menu #top, body.in-menu #hp, body.in-menu #crosshair, body.in-menu #stic
 }
 #btn-dodge.cooling::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: var(--cd); background: rgba(0, 0, 0, 0.45); }
 body.in-menu #btn-dodge { display: none; }
+.settings { width: 85%; max-width: 320px; display: flex; flex-direction: column; gap: 14px; text-align: left; margin-bottom: 8px; }
+.settings label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.settings label b { color: #ffd23c; margin-left: 6px; }
+.settings input[type='range'] { width: 100%; height: 30px; accent-color: #ffd23c; touch-action: auto; }
+.settings .btn { align-self: flex-end; font-size: 13px; }

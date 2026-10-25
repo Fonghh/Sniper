@@ -12,6 +12,8 @@ export const ZONE_LEN = 36; // m
 export const CORRIDOR_LEN = 14;
 export const STRIDE = ZONE_LEN + CORRIDOR_LEN;
 const CORRIDOR_HALF = 5;
+/** Obstacles this low are stepped onto and walked over rather than walked around. */
+export const STEP_UP = 1.3;
 
 export type BoxKind = 'wall' | 'cover' | 'platform' | 'gate' | 'block';
 
@@ -36,6 +38,7 @@ export interface Zone {
 /** What the arrows, enemies and player need from the world. */
 export interface WorldLike {
   height(x: number, z: number): number;
+  /** Pushes a walker out of obstacles; low cover (≤ STEP_UP) is climbed instead. */
   resolve(pos: THREE.Vector3, radius: number): void;
   collide(a: V3, b: V3): { t: number; normal: THREE.Vector3 } | null;
   lineOfSight(a: V3, b: V3): boolean;
@@ -255,8 +258,15 @@ export class Level implements WorldLike {
   }
 
   resolve(pos: THREE.Vector3, radius: number) {
+    let floor = 0;
     for (const b of this.near(pos.x, pos.z, radius)) {
       if (b.max.y < 0.3) continue;
+      if (b.max.y <= STEP_UP && b.kind === 'cover') {
+        // Climb onto it: stand on top while over its footprint.
+        if (pos.x > b.min.x - radius * 0.5 && pos.x < b.max.x + radius * 0.5 && pos.z > b.min.z - radius * 0.5 && pos.z < b.max.z + radius * 0.5)
+          floor = Math.max(floor, b.max.y);
+        continue;
+      }
       const cx = Math.max(b.min.x, Math.min(pos.x, b.max.x));
       const cz = Math.max(b.min.z, Math.min(pos.z, b.max.z));
       const dx = pos.x - cx;
@@ -275,7 +285,7 @@ export class Level implements WorldLike {
         }
       }
     }
-    pos.y = 0;
+    pos.y = floor;
   }
 
   collide(a: V3, b: V3): { t: number; normal: THREE.Vector3 } | null {
