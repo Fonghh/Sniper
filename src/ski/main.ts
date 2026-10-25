@@ -10,7 +10,11 @@ import { buildSkiScene, followSun } from './scene';
 // Mountain-top snowboarding prototype: one run from the summit to the valley, first person.
 
 const STEP = 1 / 120;
-const BASE_FOV = 88;
+const BASE_FOV = 84;
+// Camera a little behind and above the eyes, tipped down less than a head-cam: more of the
+// mountain in view, the legs and board along the bottom of the screen.
+const CAM_BACK = 0.6; // m
+const CAM_UP = 0.3; // m above eye height
 const CRASH_TIME = 1.8; // s on the ground before getting back up
 const BEST_KEY = 'ski.best';
 
@@ -196,8 +200,7 @@ const travel = new THREE.Vector3();
 function updateCamera(dt: number) {
   const v = board.vel;
   const flat = Math.hypot(v.x, v.z);
-  // Head-cam: eyes above the middle of the board, looking where you are going (down the
-  // board when nearly stopped) and tipped down so the board's nose stays in view.
+  // Look where you are going (down the board when nearly stopped).
   let want = cam.yaw;
   if (flat > 2) want = Math.atan2(v.x, v.z);
   else if (!controls.input.turn) {
@@ -210,15 +213,17 @@ function updateCamera(dt: number) {
   let pitch: number;
   if (board.grounded) {
     const drop = -(n.x * travel.x + n.z * travel.z) / n.y; // dh per metre along travel
-    pitch = Math.atan(drop) * 0.85 - 0.7;
-  } else pitch = Math.atan2(v.y, Math.max(flat, 1)) * 0.5 - 0.72;
+    pitch = Math.atan(drop) * 0.8 - 0.42;
+  } else pitch = Math.atan2(v.y, Math.max(flat, 1)) * 0.4 - 0.46;
   cam.pitch += (pitch - cam.pitch) * Math.min(1, dt * 4);
   cam.roll += (board.edge * 0.18 - cam.roll) * Math.min(1, dt * 5);
   cam.dip *= Math.exp(-dt * 6);
 
   const crouch = controls.input.jump ? board.charge / 0.45 : Math.max(0, controls.input.press) * 0.35;
-  const eyeH = EYE - crouch * 0.32 - cam.dip;
-  camera.position.copy(board.pos).addScaledVector(n, eyeH).addScaledVector(travel, 0.3);
+  const eyeH = EYE + CAM_UP - crouch * 0.32 - cam.dip;
+  camera.position.copy(board.pos).addScaledVector(n, eyeH).addScaledVector(travel, -CAM_BACK);
+  // Never let the camera dip into the slope behind the rider.
+  camera.position.y = Math.max(camera.position.y, course.height(camera.position.x, camera.position.z) + 0.6);
   let roll = cam.roll;
   let p = cam.pitch;
   if (state === 'crash') {

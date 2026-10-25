@@ -66,7 +66,7 @@ function buildRunMesh(course: Course, z0: number, z1: number, cols: number[]): T
   for (let j = 0; j < rows - 1; j++) {
     for (let i = 0; i < nc - 1; i++) {
       const a = j * nc + i;
-      index.push(a, a + 1, a + nc, a + 1, a + nc + 1, a + nc);
+      index.push(a, a + nc, a + 1, a + 1, a + nc, a + nc + 1); // counter-clockwise from above
     }
   }
   const geo = new THREE.BufferGeometry();
