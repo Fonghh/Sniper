@@ -2,7 +2,8 @@ import * as THREE from 'three';
 
 // Snowboard physics. Gravity pulls along the slope, snow friction and air drag slow you,
 // and the board's angle to the fall line decides where the speed goes:
-//  - lean alone: the board turns a little off the fall line (up to ~35°), a gentle turn;
+//  - lean alone: the board turns a little off the fall line (up to ~40°), a gentle turn;
+//  - stick centred: the board keeps its current line;
 //  - turn + lean: the board goes further, up to straight across the slope (a hard turn);
 //  - turn + lean back: the board goes square across and slides, braking.
 // The path follows the board only as fast as the edge can grip; the rest is a sideways
@@ -36,8 +37,8 @@ export const PHYS = {
   swingSlow: 2.4, // rad/s the board swings when slow
   swingFast: 1.3, // rad/s at 25 m/s
   pivotRate: 1.8, // rad/s turning on the flat
-  pop: 3.2, // m/s ollie
-  popCharged: 5.5,
+  pop: 4.5, // m/s ollie (about 1 m high)
+  popCharged: 7.8, // fully crouched (about 3 m)
   charge: 0.45, // s to a full crouch
   airSpin: 7.5, // rad/s spinning with the turn button in the air
   airSteer: 0.3, // rad/s: leaning in the air barely turns the board (the turn button spins it)
@@ -164,9 +165,11 @@ export class Board {
       if (speed > 1) this.heading = approachAngle(this.heading, ref + side * (Math.PI / 2), rate * 2 * dt, true);
       grip = PHYS.brakeGrip;
       slide = PHYS.brakeFriction;
-    } else if (onSlope) {
+    } else if (onSlope && lean !== 0) {
       // The stick sets the board's angle to the fall line: a little on its own (a gentle
       // turn), up to straight across with the turn button (a hard turn / traverse).
+      // With the stick centred the board simply keeps its line (so a ridge crest or a
+      // traverse can be held).
       // Lean right (+) turns right, toward -x when facing +z: the yaw decreases.
       const angle = input.turn
         ? Math.sign(lean) * (PHYS.gentleAngle + (Math.PI / 2 - PHYS.gentleAngle) * Math.abs(lean))

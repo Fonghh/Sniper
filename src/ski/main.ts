@@ -13,8 +13,8 @@ const STEP = 1 / 120;
 const BASE_FOV = 72;
 // Chase camera behind and above the rider, so the board's direction is always visible.
 const CAM_BACK = 3.4; // m
-const CAM_UP = 1.7; // m above the board
-const CAM_AHEAD = 8; // m ahead of the rider it looks at
+const CAM_UP = 2.4; // m above the rider or the snow behind, whichever is higher
+const CAM_AHEAD = 12; // m ahead of the rider it looks at
 const CRASH_TIME = 1.8; // s on the ground before getting back up
 const BEST_KEY = 'ski.best';
 
@@ -217,8 +217,10 @@ function updateCamera(dt: number) {
   cam.dip *= Math.exp(-dt * 6);
 
   // Chase position behind and above, eased so turns swing the rider across the view.
+  // Height is kept above whichever is higher, the rider or the snow behind them: on a steep
+  // face the camera rises and looks down onto the slope instead of skimming along it.
   const wantPos = board.pos.clone().addScaledVector(travel, -CAM_BACK);
-  wantPos.y += CAM_UP - cam.dip;
+  wantPos.y = Math.max(board.pos.y, course.height(wantPos.x, wantPos.z)) + CAM_UP - cam.dip;
   if (cam.snap) {
     cam.pos.copy(wantPos);
     cam.snap = false;
@@ -228,8 +230,8 @@ function updateCamera(dt: number) {
   camera.position.y = Math.max(camera.position.y, course.height(camera.position.x, camera.position.z) + 0.8);
   // Look at the snow a little ahead, so steep pitches tip the view down the slope.
   const ahead = board.pos.clone().addScaledVector(travel, CAM_AHEAD);
-  const snow = course.height(ahead.x, ahead.z) + 0.8;
-  ahead.y = board.grounded ? Math.min(board.pos.y + 0.8, snow) : Math.min(board.pos.y + 0.5, Math.max(snow, board.pos.y - 6));
+  const snow = course.height(ahead.x, ahead.z);
+  ahead.y = board.grounded ? Math.min(board.pos.y + 0.5, snow) : Math.min(board.pos.y, Math.max(snow, board.pos.y - 8));
   cam.look.lerp(ahead, cam.lookInit ? 1 : Math.min(1, dt * 6));
   cam.lookInit = false;
   camera.lookAt(cam.look);

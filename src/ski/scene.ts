@@ -12,23 +12,22 @@ const ROCK = new THREE.Color(0x6e655c);
 const ROCK_DARK = new THREE.Color(0x4f4943);
 const FOREST = new THREE.Color(0x5b6b58);
 
-/** Lateral offsets across the run (±250 m): fine near the centre, coarse at the edges. */
+/** Lateral offsets across the face (±300 m): finest near the middle, coarse beyond the face. */
 function columns(): number[] {
   const out: number[] = [];
-  for (let u = 0; u <= 250; ) {
+  for (let u = 0; u <= 300; ) {
     out.push(u);
-    u += u < 50 ? 1.5 : u < 100 ? 4 : 10;
+    u += u < 60 ? 2 : u < 230 ? 3 : 10;
   }
   return [...out.slice(1).map((u) => -u).reverse(), ...out];
 }
 
 const KICKER = new THREE.Color(0xa9c8f5);
 
-/** `wild` is 0 on the groomed run and 1 beyond its edges, where steep faces turn to rock. */
-function surfaceColor(z: number, ny: number, out: THREE.Color, rand: number, wild = 1) {
+function surfaceColor(z: number, ny: number, out: THREE.Color, rand: number) {
   out.copy(SNOW).lerp(SNOW_SHADE, rand * 0.5);
-  // Steep faces shed their snow.
-  const rock = (1 - THREE.MathUtils.smoothstep(ny, 0.6, 0.8)) * wild;
+  // Faces steeper than about 50° shed their snow: cliffs, rib flanks, ridge sides.
+  const rock = 1 - THREE.MathUtils.smoothstep(ny, 0.5, 0.66);
   out.lerp(rand > 0.5 ? ROCK : ROCK_DARK, rock);
   // Far below the run, the valley floor is wooded.
   if (z > COURSE_LENGTH) out.lerp(FOREST, THREE.MathUtils.smoothstep(z, COURSE_LENGTH, COURSE_LENGTH + 250) * 0.6);
@@ -36,7 +35,7 @@ function surfaceColor(z: number, ny: number, out: THREE.Color, rand: number, wil
 }
 
 function buildRunMesh(course: Course, z0: number, z1: number, cols: number[]): THREE.Mesh {
-  const step = 1.5;
+  const step = 2;
   const rows = Math.ceil((z1 - z0) / step) + 1;
   const nc = cols.length;
   const pos = new Float32Array(rows * nc * 3);
@@ -54,8 +53,7 @@ function buildRunMesh(course: Course, z0: number, z1: number, cols: number[]): T
       pos[k + 2] = z;
       course.normal(x, z, n);
       const r = (Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1;
-      const w = course.halfWidth(z);
-      surfaceColor(z, n.y, c, Math.abs(r), THREE.MathUtils.smoothstep(Math.abs(cols[i]), w - 1, w + 5));
+      surfaceColor(z, n.y, c, Math.abs(r));
       c.lerp(KICKER, course.onKicker(x, z) * 0.6);
       col[k] = c.r;
       col[k + 1] = c.g;
@@ -76,6 +74,7 @@ function buildRunMesh(course: Course, z0: number, z1: number, cols: number[]): T
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
   mesh.receiveShadow = true;
+  mesh.castShadow = true; // ribs and cliffs throw shadows across the chutes
   return mesh;
 }
 
@@ -95,7 +94,7 @@ function buildSurroundings(course: Course): THREE.Mesh {
     // Under the detailed run mesh, sink the coarse surface well below the whole run (not just
     // below the local height: a coarse triangle reaching from a high wall vertex would
     // otherwise cut across the run and show as patches above the real snow).
-    const inside = z > -80 && z < COURSE_LENGTH + 420 && Math.abs(x - course.centerX(z)) < 200;
+    const inside = z > -80 && z < COURSE_LENGTH + 420 && Math.abs(x - course.centerX(z)) < 270;
     const h = inside ? course.height(course.centerX(z), z) - 120 : course.height(x, z);
     p.setY(i, h);
     course.normal(x, z, n);
@@ -149,6 +148,23 @@ function buildObstacles(course: Course): THREE.Group {
   return g;
 }
 
+/** A dotted line of dark rock along the sheer parts of each cliff lip, visible from above. */
+function buildCliffLips(course: Course): THREE.InstancedMesh {
+  const lips = course.cliffLips;
+  const mesh = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: 0x3b3632, flatShading: true }), lips.length);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const s = new THREE.Vector3();
+  const v = new THREE.Vector3();
+  lips.forEach((p, i) => {
+    q.setFromEuler(new THREE.Euler(i * 1.3, i * 2.1, i * 0.7));
+    s.set(1.6 + (i % 3) * 0.4, 0.7, 1.4);
+    mesh.setMatrixAt(i, m.compose(v.set(p.x, course.height(p.x, p.z) + 0.15, p.z), q, s));
+  });
+  mesh.castShadow = mesh.receiveShadow = true;
+  return mesh;
+}
+
 function banner(text: string, color: string): THREE.Mesh {
   const c = document.createElement('canvas');
   c.width = 512;
@@ -187,14 +203,14 @@ export interface SkiScene {
 
 export function buildSkiScene(scene: THREE.Scene, course: Course): SkiScene {
   scene.background = new THREE.Color(0x9cc8ef);
-  scene.fog = new THREE.Fog(0xc9def2, 400, 3200);
-  scene.add(new THREE.HemisphereLight(0xd6e6ff, 0xb4bfd2, 1.8));
-  const sun = new THREE.DirectionalLight(0xfff0dc, 2.2);
+  scene.fog = new THREE.Fog(0xbcd5ee, 900, 4200);
+  scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x8f9db5, 1.25));
+  const sun = new THREE.DirectionalLight(0xfff0dc, 2.8);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   const sc = sun.shadow.camera;
-  sc.left = sc.bottom = -70;
-  sc.right = sc.top = 70;
+  sc.left = sc.bottom = -90;
+  sc.right = sc.top = 90;
   sc.near = 1;
   sc.far = 600;
   sun.shadow.bias = -0.0006;
@@ -205,13 +221,15 @@ export function buildSkiScene(scene: THREE.Scene, course: Course): SkiScene {
   for (let z = -60; z < COURSE_LENGTH + 380; z += 120) scene.add(buildRunMesh(course, z, Math.min(z + 120, COURSE_LENGTH + 380), cols));
   scene.add(buildSurroundings(course));
   scene.add(buildObstacles(course));
+  scene.add(buildCliffLips(course));
   scene.add(gate(course, START_Z + 4, 'START', '#2a7de1'), gate(course, FINISH_Z, 'FINISH', '#e1462a'));
   return { sun };
 }
 
 /** Keeps the shadow box centred on the rider, with the sun low in the east. */
 export function followSun(s: SkiScene, at: THREE.Vector3) {
-  s.sun.position.set(at.x + 140, at.y + 260, at.z - 90);
+  // Low from the side (about 35° up), so ribs and cliff steps throw long shadows.
+  s.sun.position.set(at.x + 260, at.y + 200, at.z + 60);
   s.sun.target.position.copy(at);
   s.sun.target.updateMatrixWorld();
 }

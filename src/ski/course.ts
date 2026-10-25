@@ -1,14 +1,16 @@
 import { createNoise2D, fbm, Noise2D } from '../world/noise';
 import { mulberry32 } from '../world/random';
 
-// A single downhill line from a summit to a valley floor. Downhill is +z. The run follows a
-// meandering channel: a steep couloir between rock walls, an open bowl with rollers, a
-// tree-lined middle section with kickers, then a flat runout to the finish. Pure.
+// A big mountain face below a summit ridge; downhill is +z. You start on a narrow ridge crest
+// that drops away on both sides, then the face opens up: rock ribs split it into chutes,
+// bands of cliffs cross it with only a few gaps you can ride through (or jump off), and
+// lower down it fans out into a treed apron with kickers before a short runout. It stays
+// steep almost to the bottom. Pure.
 
 export const COURSE_LENGTH = 1650; // m along z
 export const START_Z = 12;
 export const FINISH_Z = 1560;
-export const TOP = 620; // m, elevation at the start
+export const TOP = 1000; // m, elevation at the start
 
 export interface Obstacle {
   x: number;
@@ -23,10 +25,16 @@ export interface Kicker {
   height: number;
 }
 
-/** Slope angle (degrees) of the centre line at distance z down the course. */
+interface Band {
+  z: number; // where the cliff line crosses the centre
+  drop: number; // m
+  phase: number;
+}
+
+/** Slope angle (degrees) of the face at distance z down the course. */
 function slopeAt(z: number): number {
   const keys: Array<[number, number]> = [
-    [0, 2], [30, 2], [70, 42], [430, 42], [480, 32], [800, 32], [850, 26], [1250, 26], [1320, 17], [1480, 17], [1530, 3], [COURSE_LENGTH, 3],
+    [0, 2], [25, 2], [60, 38], [520, 40], [580, 35], [1100, 35], [1150, 31], [1480, 31], [1525, 8], [1600, 3], [COURSE_LENGTH, 3],
   ];
   for (let i = 1; i < keys.length; i++) {
     const [z1, a1] = keys[i];
@@ -44,17 +52,30 @@ const smooth = (e0: number, e1: number, x: number) => {
   return t * t * (3 - 2 * t);
 };
 
+// Rock ribs (offsets from the centre line) that divide the face into chutes.
+const RIBS = [-150, -88, -30, 34, 96, 158];
+const RIB_WIDTH = 16; // m half-width at the base
+const RIB_HEIGHT = 18; // m
+
 export class Course {
-  private profile: Float32Array; // centre-line elevation per metre of z
+  private profile: Float32Array; // face elevation per metre of z (before cliffs)
   private noise: Noise2D;
   private rock: Noise2D;
   readonly kickers: Kicker[] = [
-    { z: 905, height: 1.6 },
-    { z: 1040, height: 2.2 },
-    { z: 1175, height: 1.8 },
-    { z: 1380, height: 2.6 },
+    { z: 1190, height: 3.2 },
+    { z: 1270, height: 4.4 },
+    { z: 1350, height: 3.6 },
+    { z: 1430, height: 5.2 },
+  ];
+  /** Cliff bands across the face; each has a few gaps where it is a steep ramp instead. */
+  readonly bands: Band[] = [
+    { z: 430, drop: 9, phase: 0.4 },
+    { z: 760, drop: 13, phase: 2.1 },
+    { z: 1020, drop: 8, phase: 4.0 },
   ];
   readonly obstacles: Obstacle[] = [];
+  /** Points along the sheer parts of the cliff lips (for the dark rock line that warns of them). */
+  readonly cliffLips: Array<{ x: number; z: number }> = [];
   private grid = new Map<number, Obstacle[]>();
 
   constructor(readonly seed = 3) {
@@ -68,66 +89,106 @@ export class Course {
     this.noise = createNoise2D(seed);
     this.rock = createNoise2D(seed + 1);
     this.placeObstacles();
+    for (const b of this.bands) {
+      const cx = this.centerX(b.z);
+      const w = this.halfWidth(b.z);
+      for (let dx = -w; dx <= w; dx += 4) {
+        if (this.gap(dx, b) > 0.15) continue;
+        const x = cx + dx;
+        this.cliffLips.push({ x, z: this.bandLine(x, b) - 2.5 });
+      }
+    }
   }
 
-  /** x of the channel centre at z. */
+  private bandLine(x: number, b: Band): number {
+    return b.z + 14 * Math.sin(x / 55 + b.phase);
+  }
+
+  /** 0 where a band is a sheer cliff, 1 in its gaps (a steep ramp you can ride). */
+  private gap(dx: number, b: Band): number {
+    return smooth(0.62, 0.74, 0.5 + 0.5 * Math.sin(dx / 33 + b.phase * 2));
+  }
+
+  /** x of the line down the middle of the face at z. */
   centerX(z: number): number {
-    const fade = smooth(0, 120, z); // the start pad is straight
-    return fade * (38 * Math.sin(z / 190) + 16 * Math.sin(z / 71 + 1.3));
+    const fade = smooth(0, 160, z); // the summit ridge runs straight
+    return fade * (30 * Math.sin(z / 230) + 10 * Math.sin(z / 83 + 1.3));
   }
 
-  /** Half-width of the rideable channel at z: narrow in the couloir, wide in the bowl. */
+  /** Half-width of the rideable face: the ridge crest at the top, then the full face. */
   halfWidth(z: number): number {
-    const couloir = smooth(60, 120, z) * (1 - smooth(380, 470, z));
-    const base = 26 + 10 * Math.sin(z / 230 + 0.5);
-    return base - couloir * (base - 9) + smooth(450, 560, z) * (1 - smooth(780, 860, z)) * 22;
+    return 40 + 180 * smooth(150, 520, z);
   }
 
-  private centre(z: number): number {
+  private face(z: number): number {
     const zc = Math.max(0, Math.min(this.profile.length - 2, z));
     const i = Math.floor(zc);
     const f = zc - i;
-    const extra = z < 0 ? -z * 0.2 : 0; // a little rise behind the start
+    const extra = z < 0 ? -z * 0.4 : 0; // the summit rises a little behind the start
     return this.profile[i] * (1 - f) + this.profile[i + 1] * f + extra;
   }
 
+  /** Total cliff drop above z at lateral position x (a step where the band is a cliff). */
+  private cliffs(x: number, z: number, dx: number): number {
+    let drop = 0;
+    for (const b of this.bands) {
+      const line = this.bandLine(x, b);
+      // Gaps: in about a quarter of the width the step spreads into a steep 50 m ramp.
+      const len = 3 + 50 * this.gap(dx, b);
+      drop += b.drop * smooth(line - len / 2, line + len / 2, z);
+    }
+    return drop;
+  }
+
+  /** Height of the rock ribs at (dx, z). */
+  private ribs(dx: number, z: number): number {
+    const on = smooth(170, 240, z) * (1 - smooth(1000, 1120, z));
+    if (on <= 0) return 0;
+    let h = 0;
+    RIBS.forEach((off, i) => {
+      const c = off + 12 * Math.sin(z / 90 + i * 1.7);
+      const d = Math.abs(dx - c);
+      if (d >= RIB_WIDTH) return;
+      // Ribs come and go down the face, leaving gaps to cross between chutes.
+      const present = smooth(-0.4, -0.05, this.rock(i * 9.1, z / 110));
+      h = Math.max(h, RIB_HEIGHT * present * (1 - d / RIB_WIDTH) ** 1.4);
+    });
+    return h * on;
+  }
+
   height(x: number, z: number): number {
-    let h = this.centre(z);
     const dx = x - this.centerX(z);
     const d = Math.abs(dx);
     const w = this.halfWidth(z);
-    // Gentle U across the channel, then rising walls with craggy rock.
-    if (d < w) h += (d / w) ** 2 * 3;
-    else {
-      // Steep near walls (sheer in the couloir), then broad slopes up to the ridges.
+    let h = this.face(z) - this.cliffs(x, z, dx);
+    // The summit ridge: a crest a few metres wide falling away steeply to both sides.
+    const ridge = 1 - smooth(140, 230, z);
+    h -= ridge * Math.max(0, d - 4) * 0.95;
+    h += this.ribs(dx, z);
+    if (d > w) {
+      // Beyond the face: rising walls, craggy rock, big peaks further out.
       const o = d - w;
-      const couloir = smooth(50, 90, z) * (1 - smooth(440, 500, z));
-      const steep = 0.7 + couloir * 0.9;
-      const near = Math.min(o, 28);
-      h += 3 + near * steep + Math.max(0, o - 28) * 0.45;
+      const near = Math.min(o, 30);
+      h += near * 0.85 + Math.max(0, o - 30) * 0.45;
       h += Math.abs(this.rock(x / 22, z / 22)) * near * 0.5;
-      // Big ridged peaks far from the run.
       h += smooth(60, 500, o) * (1 - Math.abs(this.rock(x / 520, z / 520))) * 320;
     }
-    // Surface texture: soft rolls everywhere, bigger rollers in the bowl.
-    // (Softer on the run itself, so speed doesn't turn every bump into a launch.)
+    // Surface texture, softer where you ride.
     h += fbm(this.noise, x / 30, z / 30, 3) * (d < w ? 0.6 : 1.2);
-    const bowl = smooth(480, 520, z) * (1 - smooth(760, 800, z));
-    h += bowl * Math.sin(z / 9) * 0.9 * (1 - smooth(w * 0.7, w, d));
     for (const k of this.kickers) h += this.kicker(z - k.z, dx, k.height);
-    // Flatten the start pad.
-    h = h + (this.centre(z) - h) * (1 - smooth(4, 20, z)) * (1 - smooth(8, 16, d));
+    // Flatten the start pad on the crest.
+    h = h + (this.face(z) - h) * (1 - smooth(4, 20, z)) * (1 - smooth(5, 9, d));
     return h;
   }
 
   /** A jump across the centre: ramp up to a lip, then a long landing that falls away. */
   private kicker(s: number, dx: number, height: number): number {
-    if (s < -16 || s > 24 || Math.abs(dx) > 9) return 0;
-    const across = 1 - smooth(5, 9, Math.abs(dx));
+    if (s < -22 || s > 34 || Math.abs(dx) > 11) return 0;
+    const across = 1 - smooth(6, 11, Math.abs(dx));
     let y: number;
-    if (s <= 0) y = height * ((s + 16) / 16) ** 2;
-    else if (s < 2) y = height;
-    else y = height * (1 - smooth(2, 24, s));
+    if (s <= 0) y = height * ((s + 22) / 22) ** 2;
+    else if (s < 3) y = height;
+    else y = height * (1 - smooth(3, 34, s));
     return y * across;
   }
 
@@ -136,7 +197,7 @@ export class Course {
     const dx = Math.abs(x - this.centerX(z));
     for (const k of this.kickers) {
       const s = z - k.z;
-      if (s > -16 && s < 4 && dx < 9) return 1 - smooth(5, 9, dx);
+      if (s > -22 && s < 5 && dx < 11) return 1 - smooth(6, 11, dx);
     }
     return 0;
   }
@@ -162,26 +223,26 @@ export class Course {
       list.push(o);
       this.grid.set(key, list);
     };
-    const clearOfKickers = (z: number) => this.kickers.every((k) => Math.abs(z - k.z) > 40);
-    // Rocks poking through the snow inside the channel (none in the narrowest couloir line).
-    for (let i = 0; i < 70; i++) {
-      const z = 130 + rand() * 1250;
-      const w = this.halfWidth(z);
-      const side = rand() < 0.5 ? -1 : 1;
-      const off = w * (0.25 + rand() * 0.7) * side;
-      if (!clearOfKickers(z) || w < 12) continue;
-      add({ x: this.centerX(z) + off, z, r: 0.7 + rand() * 1.4, top: 0.6 + rand() * 1.4, kind: 'rock' });
+    const clear = (x: number, z: number) =>
+      this.kickers.every((k) => Math.abs(z - k.z) > 45 || Math.abs(x - this.centerX(z)) > 16) &&
+      Math.abs(x - this.centerX(z)) > 2;
+    // Boulders scattered over the face below the ridge.
+    for (let i = 0; i < 160; i++) {
+      const z = 220 + rand() * 1200;
+      const x = this.centerX(z) + (rand() - 0.5) * 2 * this.halfWidth(z) * 0.95;
+      if (!clear(x, z)) continue;
+      add({ x, z, r: 0.8 + rand() * 1.6, top: 0.7 + rand() * 1.6, kind: 'rock' });
     }
-    // Trees: along the edges from the bowl down, plus a few islands in the wide parts.
-    for (let i = 0; i < 420; i++) {
-      const z = 480 + rand() * 1120;
+    // Trees: thin at first, a forest on the lower apron, thick along the edges.
+    for (let i = 0; i < 900; i++) {
+      const z = 900 + rand() * 720;
       const w = this.halfWidth(z);
-      const side = rand() < 0.5 ? -1 : 1;
-      const inside = rand() < 0.18 && w > 20;
-      const off = inside ? w * (0.45 + rand() * 0.45) * side : (w + 1 + rand() * 45) * side;
-      if (inside && !clearOfKickers(z)) continue;
-      if (z > FINISH_Z - 30 && z < FINISH_Z + 20 && Math.abs(off) < w + 4) continue;
-      add({ x: this.centerX(z) + off, z, r: 0.45, top: 4 + rand() * 5, kind: 'tree' });
+      const edge = rand() < 0.4;
+      const x = this.centerX(z) + (edge ? (w * 0.8 + rand() * 60) * (rand() < 0.5 ? -1 : 1) : (rand() - 0.5) * 2 * w * 0.8);
+      const density = smooth(900, 1150, z);
+      if (rand() > density || !clear(x, z)) continue;
+      if (z > FINISH_Z - 40 && z < FINISH_Z + 20 && Math.abs(x - this.centerX(z)) < 30) continue;
+      add({ x, z, r: 0.45, top: 4 + rand() * 6, kind: 'tree' });
     }
   }
 

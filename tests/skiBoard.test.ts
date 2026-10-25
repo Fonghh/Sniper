@@ -183,7 +183,7 @@ describe('snowboard physics', () => {
     const b = new Board();
     b.place(0, 0, 0, g);
     run(b, g, { ...idle, jump: true }, 0.5);
-    const events = run(b, g, idle, 1.5);
+    const events = run(b, g, idle, 3);
     expect(events[0]?.type).toBe('takeoff');
     expect(events.some((e) => e.type === 'land')).toBe(true);
   });
@@ -201,15 +201,38 @@ describe('ski course', () => {
   });
 
   it('is walled in: the edges rise above the channel', () => {
-    for (const z of [200, 600, 1000]) {
+    for (const z of [600, 900, 1300]) {
       const mid = c.height(c.centerX(z), z);
       const w = c.halfWidth(z);
-      expect(c.height(c.centerX(z) + w + 25, z)).toBeGreaterThan(mid + 10);
-      expect(c.height(c.centerX(z) - w - 25, z)).toBeGreaterThan(mid + 10);
+      expect(c.height(c.centerX(z) + w + 40, z)).toBeGreaterThan(mid + 10);
+      expect(c.height(c.centerX(z) - w - 40, z)).toBeGreaterThan(mid + 10);
     }
   });
 
-  it('keeps the couloir line free of rocks and trees', () => {
+  it('starts on a ridge crest that falls away to both sides', () => {
+    const z = 80;
+    const crest = c.height(c.centerX(z), z);
+    expect(c.height(c.centerX(z) + 30, z)).toBeLessThan(crest - 15);
+    expect(c.height(c.centerX(z) - 30, z)).toBeLessThan(crest - 15);
+  });
+
+  it('has cliff bands with gaps: a sheer drop in places, a rideable ramp in others', () => {
+    let sheer = 0;
+    let ramp = 0;
+    const b = c.bands[1];
+    for (let dx = -200; dx <= 200; dx += 4) {
+      const x = c.centerX(b.z) + dx;
+      // Steepest 2 m step through the band at this x.
+      let steepest = 0;
+      for (let z = b.z - 40; z < b.z + 40; z += 1) steepest = Math.max(steepest, c.height(x, z) - c.height(x, z + 2));
+      if (steepest > 6) sheer++;
+      else if (steepest < 3) ramp++;
+    }
+    expect(sheer).toBeGreaterThan(30);
+    expect(ramp).toBeGreaterThan(10);
+  });
+
+  it('keeps the middle line free of rocks and trees', () => {
     for (const o of c.obstacles) expect(Math.abs(o.x - c.centerX(o.z))).toBeGreaterThan(1.5);
   });
 });
