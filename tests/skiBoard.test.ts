@@ -107,8 +107,8 @@ describe('snowboard physics', () => {
     b.place(0, 0, 0, g);
     run(b, g, idle, 3);
     run(b, g, { ...idle, lean: 1 }, 2);
-    expect(Math.abs(wrap(b.heading))).toBeLessThan(0.65);
-    expect(Math.abs(wrap(b.heading))).toBeGreaterThan(0.5);
+    expect(Math.abs(wrap(b.heading))).toBeLessThan(0.75);
+    expect(Math.abs(wrap(b.heading))).toBeGreaterThan(0.6);
   });
 
   it('a hard turn puts the board across the slope; at speed it skids a long way', () => {
@@ -126,8 +126,24 @@ describe('snowboard physics', () => {
     }
     expect(Math.abs(Math.abs(wrap(b.heading)) - Math.PI / 2)).toBeLessThan(0.15);
     expect(skidded).toBeGreaterThan(0.5);
-    expect(b.speed).toBeLessThan(v0 * 0.6);
+    expect(b.speed).toBeLessThan(v0 * 0.65);
     expect(b.pos.distanceTo(from)).toBeGreaterThan(25); // a long skid, not an instant stop
+  });
+
+  it('a pressed-edge carve at speed turns cleanly and leans the rider into it', () => {
+    const g = slope(25);
+    const b = new Board();
+    b.place(0, 0, 0, g);
+    run(b, g, { ...idle, press: 1 }, 6);
+    const v0 = b.speed;
+    let lean = 0;
+    for (let t = 0; t < 1.2; t += DT) {
+      b.step(DT, { ...idle, lean: 1 }, g);
+      lean = Math.max(lean, b.inclination);
+    }
+    expect(b.vel.x).toBeLessThan(-5); // turned right
+    expect(b.speed).toBeGreaterThan(v0 * 0.85);
+    expect(lean).toBeGreaterThan(0.5); // ~30°+ into the turn
   });
 
   it('S-turns hold the speed down on a steep slope', () => {

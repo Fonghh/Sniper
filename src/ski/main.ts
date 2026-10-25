@@ -3,18 +3,18 @@ import { SkiAudio } from './audio';
 import { Board, BoardEvent, wrap } from './board';
 import { SkiControls } from './controls';
 import { Course, FINISH_Z, START_Z } from './course';
-import { Spray, Track } from './fx';
+import { SpeedLines, Spray, Track } from './fx';
 import { Rider } from './rider';
 import { buildSkiScene, followSun } from './scene';
 
 // Mountain-top snowboarding prototype: one run from the summit to the valley, first person.
 
 const STEP = 1 / 120;
-const BASE_FOV = 70;
+const BASE_FOV = 72;
 // Chase camera behind and above the rider, so the board's direction is always visible.
-const CAM_BACK = 4.2; // m
-const CAM_UP = 2.2; // m above the board
-const CAM_AHEAD = 7; // m ahead of the rider it looks at
+const CAM_BACK = 3.4; // m
+const CAM_UP = 1.7; // m above the board
+const CAM_AHEAD = 8; // m ahead of the rider it looks at
 const CRASH_TIME = 1.8; // s on the ground before getting back up
 const BEST_KEY = 'ski.best';
 
@@ -37,6 +37,7 @@ const world = buildSkiScene(scene, course);
 const board = new Board();
 const rider = new Rider(scene);
 const spray = new Spray(scene);
+const speedLines = new SpeedLines(scene);
 const track = new Track(scene, course);
 const audio = new SkiAudio();
 const controls = new SkiControls($('touch-area'), $('stick'), $('stick-knob'), $('btn-turn'), $('btn-jump'));
@@ -233,14 +234,19 @@ function updateCamera(dt: number) {
   cam.lookInit = false;
   camera.lookAt(cam.look);
   camera.rotateZ(cam.roll);
-  const shake = board.grounded ? Math.min(1, board.speed / 30) ** 2 * 0.004 : 0;
+  const shake = board.grounded ? Math.min(1, board.speed / 30) ** 2 * 0.01 : 0;
   camera.rotateX((Math.random() - 0.5) * shake);
-  camera.fov = BASE_FOV + Math.min(12, board.speed * 0.35);
+  // The view widens with speed (about +20° near 120 km/h).
+  camera.fov = BASE_FOV + Math.min(22, board.speed * 0.6);
   camera.updateProjectionMatrix();
 
-  const crouch = controls.input.jump ? board.charge / 0.45 : Math.max(0, controls.input.press) * 0.35;
+  // Knees bend with a crouch, a tuck, or a hard carve.
+  const crouch = Math.min(
+    1,
+    controls.input.jump ? board.charge / 0.45 : Math.max(0, controls.input.press) * 0.35 + Math.abs(board.inclination) * 0.45,
+  );
   rider.root.visible = true;
-  rider.pose(board.pos, board.heading, n, board.edge, crouch, controls.input.lean, controls.input.press);
+  rider.pose(board.pos, board.heading, n, board.inclination, crouch, controls.input.lean, controls.input.press);
   if (state === 'crash') {
     // Tumble over onto the snow.
     rider.root.rotateZ(Math.min(1, crashFor / 0.5) * 1.35);
@@ -253,10 +259,19 @@ function updateFx(dt: number) {
   if (board.grounded && state === 'run' && board.speed > 2) {
     const dir = new THREE.Vector3(v.x, 0, v.z).normalize();
     track.add(board.pos, dir, 0.27 + board.skid * 1.1);
-    const rate = board.skid * 160 + Math.abs(board.edge) * board.speed * 2.5;
-    if (rate > 5) spray.emit(dt, rate, board.pos, dir, v);
+    // Skids and brakes shovel a wall of snow ahead of the slide.
+    if (board.skid > 0.15 && board.speed > 3) {
+      spray.emit(dt, Math.min(900, board.skid * board.speed * 30), board.pos, dir, v, 1 + board.speed / 12);
+    }
+    // A clean carve throws a thin fan off the edge, out of the turn.
+    const carve = Math.abs(board.inclination);
+    if (carve > 0.25 && board.speed > 8 && board.skid < 0.3) {
+      const out = new THREE.Vector3(dir.z, 0, -dir.x).multiplyScalar(Math.sign(board.inclination));
+      spray.emit(dt, carve * board.speed * 10, board.pos, out.addScaledVector(dir, 0.5).normalize(), v, 0.8);
+    }
   }
   spray.update(dt);
+  speedLines.update(camera, state === 'run' ? board.vel : new THREE.Vector3());
   audio.update(state === 'run' ? board.speed : 0, board.grounded, board.skid, board.edge);
 }
 

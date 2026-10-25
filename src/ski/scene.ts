@@ -12,10 +12,10 @@ const ROCK = new THREE.Color(0x6e655c);
 const ROCK_DARK = new THREE.Color(0x4f4943);
 const FOREST = new THREE.Color(0x5b6b58);
 
-/** Lateral offsets across the run: fine near the centre, coarse at the edges. */
+/** Lateral offsets across the run (±250 m): fine near the centre, coarse at the edges. */
 function columns(): number[] {
   const out: number[] = [];
-  for (let u = 0; u <= 170; ) {
+  for (let u = 0; u <= 250; ) {
     out.push(u);
     u += u < 50 ? 1.5 : u < 100 ? 4 : 10;
   }
@@ -92,9 +92,11 @@ function buildSurroundings(course: Course): THREE.Mesh {
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i);
     const z = p.getZ(i);
-    let h = course.height(x, z);
-    const inside = z > -40 && z < COURSE_LENGTH + 380 && Math.abs(x - course.centerX(z)) < 175;
-    if (inside) h -= 25;
+    // Under the detailed run mesh, sink the coarse surface well below the whole run (not just
+    // below the local height: a coarse triangle reaching from a high wall vertex would
+    // otherwise cut across the run and show as patches above the real snow).
+    const inside = z > -80 && z < COURSE_LENGTH + 420 && Math.abs(x - course.centerX(z)) < 200;
+    const h = inside ? course.height(course.centerX(z), z) - 120 : course.height(x, z);
     p.setY(i, h);
     course.normal(x, z, n);
     surfaceColor(z, n.y * 1.05, c, ((i * 7919) % 100) / 100);

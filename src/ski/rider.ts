@@ -98,14 +98,15 @@ export class Rider {
    * Poses the rider. `crouch` 0..1 bends the knees; `lean` shifts the hips toward the toe
    * (+) or heel (-) edge; `press` shifts them toward the nose (+) or tail (-).
    */
-  pose(pos: THREE.Vector3, heading: number, normal: THREE.Vector3, edge: number, crouch: number, lean: number, press: number) {
+  pose(pos: THREE.Vector3, heading: number, normal: THREE.Vector3, roll: number, crouch: number, lean: number, press: number) {
     const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
     const yaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), heading);
     this.root.position.copy(pos);
     this.root.quaternion.copy(q).multiply(yaw);
-    // Tip the board on its edge while carving (toe edge is -x).
-    this.board.rotation.z = edge * 0.35;
+    // Board and body roll together onto the edge (into a carve, away from a skid).
+    this.root.rotateZ(roll);
     this.root.updateMatrixWorld(true);
+    const edge = -roll;
     const hipY = 0.86 - crouch * 0.28;
     const hip = new THREE.Vector3(-0.05 - lean * 0.12, hipY, press * 0.12);
     this.torso.position.copy(hip);

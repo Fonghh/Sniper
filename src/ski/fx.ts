@@ -3,7 +3,7 @@ import type { Course } from './course';
 
 // Snow spray off the board's edge and the track it leaves in the snow.
 
-const SPRAY_MAX = 600;
+const SPRAY_MAX = 1600;
 
 export class Spray {
   readonly points: THREE.Points;
@@ -26,15 +26,15 @@ export class Spray {
     ctx.fillRect(0, 0, 32, 32);
     this.points = new THREE.Points(
       geo,
-      new THREE.PointsMaterial({ size: 0.28, map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, color: 0xffffff, opacity: 0.9 }),
+      new THREE.PointsMaterial({ size: 0.42, map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false, color: 0xffffff, opacity: 0.9 }),
     );
     this.points.frustumCulled = false;
     for (let i = 0; i < SPRAY_MAX; i++) this.pos[i * 3 + 1] = -1e5;
     scene.add(this.points);
   }
 
-  /** Emits `rate` particles per second from `at`, thrown along `dir`. */
-  emit(dt: number, rate: number, at: THREE.Vector3, dir: THREE.Vector3, carry: THREE.Vector3) {
+  /** Emits `rate` particles per second from `at`, thrown along `dir`; `power` scales the throw. */
+  emit(dt: number, rate: number, at: THREE.Vector3, dir: THREE.Vector3, carry: THREE.Vector3, power = 1) {
     this.carry += rate * dt;
     while (this.carry >= 1) {
       this.carry -= 1;
@@ -44,9 +44,9 @@ export class Spray {
       this.pos[k] = at.x + (Math.random() - 0.5) * 0.6;
       this.pos[k + 1] = at.y + 0.05;
       this.pos[k + 2] = at.z + (Math.random() - 0.5) * 0.6;
-      const s = 2 + Math.random() * 4;
+      const s = (2 + Math.random() * 4) * power;
       this.vel[k] = dir.x * s + carry.x * 0.6 + (Math.random() - 0.5);
-      this.vel[k + 1] = 1.5 + Math.random() * 2.5;
+      this.vel[k + 1] = (1.5 + Math.random() * 2.5) * Math.sqrt(power);
       this.vel[k + 2] = dir.z * s + carry.z * 0.6 + (Math.random() - 0.5);
       this.life[i] = 0.5 + Math.random() * 0.5;
     }
@@ -137,5 +137,53 @@ export class Track {
     this.n = 0;
     this.last.set(1e9, 0, 0);
     this.mesh.geometry.setDrawRange(0, 0);
+  }
+}
+
+const STREAKS = 110;
+
+/**
+ * Speed lines: specks of blown snow fixed in the air around the camera, drawn as streaks
+ * along the motion, so speed reads even on a smooth white slope.
+ */
+export class SpeedLines {
+  readonly lines: THREE.LineSegments;
+  private pts: THREE.Vector3[] = [];
+  private pos = new Float32Array(STREAKS * 6);
+  private mat: THREE.LineBasicMaterial;
+
+  constructor(scene: THREE.Scene) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    this.mat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false });
+    this.lines = new THREE.LineSegments(geo, this.mat);
+    this.lines.frustumCulled = false;
+    for (let i = 0; i < STREAKS; i++) this.pts.push(new THREE.Vector3(1e9, 0, 0));
+    scene.add(this.lines);
+  }
+
+  update(camera: THREE.Camera, vel: THREE.Vector3) {
+    const speed = vel.length();
+    this.mat.opacity = Math.min(0.55, Math.max(0, (speed - 12) / 25));
+    this.lines.visible = this.mat.opacity > 0;
+    if (!this.lines.visible) return;
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+    const rel = new THREE.Vector3();
+    const trail = vel.clone().multiplyScalar(0.035);
+    for (let i = 0; i < STREAKS; i++) {
+      const p = this.pts[i];
+      rel.copy(p).sub(camera.position);
+      const ahead = rel.dot(fwd);
+      if (ahead < 0.5 || rel.lengthSq() > 45 * 45) {
+        p.copy(camera.position)
+          .addScaledVector(fwd, 6 + Math.random() * 34)
+          .addScaledVector(right, (Math.random() - 0.5) * 22)
+          .addScaledVector(up, (Math.random() - 0.35) * 12);
+      }
+      this.pos.set([p.x, p.y, p.z, p.x - trail.x, p.y - trail.y, p.z - trail.z], i * 6);
+    }
+    this.lines.geometry.attributes.position.needsUpdate = true;
   }
 }

@@ -24,14 +24,15 @@ export interface BoardInput {
 export const PHYS = {
   g: 9.81,
   glide: 0.045, // snow friction while running flat on the base
-  skidFriction: 0.75, // extra friction when the board slides fully sideways
-  brakeFriction: 0.85,
-  drag: 0.0055, // 1/m, standing
-  dragTuck: 0.0036, // pressing the nose, crouched
-  dragBack: 0.0075,
-  grip: 8, // m/s², sideways force the edge can hold while turning
+  skidFriction: 0.9, // extra friction when the board slides fully sideways
+  brakeFriction: 1.45, // the uphill edge digs in: stops you even on the steepest pitch
+  drag: 0.0042, // 1/m, standing
+  dragTuck: 0.0026, // pressing the nose, crouched
+  dragBack: 0.006,
+  grip: 8, // m/s², sideways force a flat-ish board holds while turning (hard turns skid)
+  carveGrip: 19, // m/s² with the board pressed on its edge (full lean): a clean carve
   brakeGrip: 0.8, // braking lets the board slide
-  gentleAngle: 0.6, // rad off the fall line at full lean without the turn button (~35°)
+  gentleAngle: 0.7, // rad off the fall line at full lean without the turn button (~40°)
   swingSlow: 2.4, // rad/s the board swings when slow
   swingFast: 1.3, // rad/s at 25 m/s
   pivotRate: 1.8, // rad/s turning on the flat
@@ -43,7 +44,7 @@ export const PHYS = {
   crashImpact: 15, // m/s into the slope
   crashAngle: 0.95, // rad: landing more sideways than this is a fall
   push: 2.5, // m/s² skating on the flat
-  airGap: 0.35, // m off the snow before it counts as airborne (small hops stay 'riding')
+  airGap: 0.6, // m off the snow before it counts as airborne (small hops stay 'riding')
 };
 
 export type BoardEvent =
@@ -67,6 +68,8 @@ export class Board {
   skid = 0;
   /** Carving edge angle cue, -1..1 (for camera roll). */
   edge = 0;
+  /** Body and board roll (rad, + toward the board's -x side): into the carve, against a skid. */
+  inclination = 0;
   private wasJump = false;
   readonly normal = new THREE.Vector3(0, 1, 0);
 
@@ -150,14 +153,15 @@ export class Board {
     const onSlope = Math.hypot(gx, gz) > 0.12 && speed > 2; // steeper than ~7°
     // The board swings quickly when slow, more slowly at speed.
     const rate = PHYS.swingSlow + (PHYS.swingFast - PHYS.swingSlow) * Math.min(1, speed / 25);
-    let grip = PHYS.grip;
+    // Pressing the board onto its edge (leaning without the turn button) grips much harder.
+    let grip = input.turn ? PHYS.grip : PHYS.grip + (PHYS.carveGrip - PHYS.grip) * Math.abs(lean);
     let slide = PHYS.skidFriction;
 
     if (input.turn && (press < -0.35 || lean === 0)) {
       // Brake: board square to the fall line on the nearer side, sliding sideways.
       const ref = onSlope ? fallYaw : velYaw;
       const side = wrap(this.heading - ref) >= 0 ? 1 : -1;
-      this.heading = approachAngle(this.heading, ref + side * (Math.PI / 2), rate * 1.4 * dt, true);
+      if (speed > 1) this.heading = approachAngle(this.heading, ref + side * (Math.PI / 2), rate * 2 * dt, true);
       grip = PHYS.brakeGrip;
       slide = PHYS.brakeFriction;
     } else if (onSlope) {
@@ -182,11 +186,19 @@ export class Board {
     const switchStance = Math.abs(wrap(velYaw - this.heading)) > Math.PI / 2;
     const leadYaw = switchStance ? wrap(this.heading + Math.PI) : this.heading;
     let slip = 0;
+    let turnRate = 0;
     if (speed > 0.3) {
       const turn = clampAbs(wrap(leadYaw - velYaw), (grip / Math.max(speed, 1)) * dt);
       this.vel.applyAxisAngle(n, turn);
       slip = Math.abs(Math.sin(wrap(leadYaw - velYaw - turn)));
+      turnRate = turn / dt;
     }
+    // Lean into the turn by the sideways acceleration (tan φ = a / g), and away from a skid.
+    const carveTilt = Math.atan((-speed * turnRate) / PHYS.g) * (switchStance ? -1 : 1);
+    const sideV = this.vel.x * Math.cos(this.heading) - this.vel.z * Math.sin(this.heading);
+    const skidTilt = Math.sign(sideV) * slip * Math.min(1, speed / 6) * 0.6;
+    const tilt = clampAbs(carveTilt + skidTilt, 0.85);
+    this.inclination += (tilt - this.inclination) * Math.min(1, dt * 8);
     let mu = PHYS.glide + slide * slip;
     let dragK = PHYS.drag;
     if (press > 0 && !input.turn) {
@@ -226,6 +238,7 @@ export class Board {
     this.heading = wrap(this.heading + rate * dt);
     this.spin += rate * dt;
     this.skid = 0;
+    this.inclination *= 1 - Math.min(1, dt * 4);
   }
 
   private land(impact: number): BoardEvent {

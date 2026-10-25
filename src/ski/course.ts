@@ -26,7 +26,7 @@ export interface Kicker {
 /** Slope angle (degrees) of the centre line at distance z down the course. */
 function slopeAt(z: number): number {
   const keys: Array<[number, number]> = [
-    [0, 2], [30, 2], [70, 36], [430, 36], [480, 24], [800, 24], [850, 19], [1250, 19], [1320, 10], [1480, 10], [1530, 2], [COURSE_LENGTH, 2],
+    [0, 2], [30, 2], [70, 42], [430, 42], [480, 32], [800, 32], [850, 26], [1250, 26], [1320, 17], [1480, 17], [1530, 3], [COURSE_LENGTH, 3],
   ];
   for (let i = 1; i < keys.length; i++) {
     const [z1, a1] = keys[i];
@@ -110,7 +110,8 @@ export class Course {
       h += smooth(60, 500, o) * (1 - Math.abs(this.rock(x / 520, z / 520))) * 320;
     }
     // Surface texture: soft rolls everywhere, bigger rollers in the bowl.
-    h += fbm(this.noise, x / 30, z / 30, 3) * 1.2;
+    // (Softer on the run itself, so speed doesn't turn every bump into a launch.)
+    h += fbm(this.noise, x / 30, z / 30, 3) * (d < w ? 0.6 : 1.2);
     const bowl = smooth(480, 520, z) * (1 - smooth(760, 800, z));
     h += bowl * Math.sin(z / 9) * 0.9 * (1 - smooth(w * 0.7, w, d));
     for (const k of this.kickers) h += this.kicker(z - k.z, dx, k.height);
