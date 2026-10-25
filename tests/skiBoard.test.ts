@@ -87,7 +87,57 @@ describe('snowboard physics', () => {
     run(carve, g, { ...idle, lean: 1 }, 1);
     run(skid, g, { ...idle, lean: 1, turn: true }, 1);
     expect(skid.speed).toBeLessThan(carve.speed - 1.5);
-    expect(skid.skid).toBeGreaterThan(0.5);
+    expect(skid.skid).toBeGreaterThan(0.1);
+  });
+
+  it('stands still and keeps its heading on the start pad of the real course', () => {
+    const c = new Course();
+    const b = new Board();
+    b.place(c.centerX(START_Z), START_Z, 0, c);
+    run(b, c, idle, 3);
+    expect(Math.abs(b.heading)).toBeLessThan(0.05);
+    run(b, c, { ...idle, press: 1 }, 6);
+    expect(Math.abs(wrap(b.heading))).toBeLessThan(0.3);
+    expect(b.pos.z).toBeGreaterThan(START_Z + 10);
+  });
+
+    it('leaning alone only turns the board a little off the fall line', () => {
+    const g = slope(25);
+    const b = new Board();
+    b.place(0, 0, 0, g);
+    run(b, g, idle, 3);
+    run(b, g, { ...idle, lean: 1 }, 2);
+    expect(Math.abs(wrap(b.heading))).toBeLessThan(0.65);
+    expect(Math.abs(wrap(b.heading))).toBeGreaterThan(0.5);
+  });
+
+  it('a hard turn puts the board across the slope; at speed it skids a long way', () => {
+    const g = slope(25);
+    const b = new Board();
+    b.place(0, 0, 0, g);
+    run(b, g, { ...idle, press: 1 }, 6);
+    expect(b.speed).toBeGreaterThan(20);
+    const v0 = b.speed;
+    const from = b.pos.clone();
+    let skidded = 0;
+    for (let t = 0; t < 3; t += DT) {
+      b.step(DT, { lean: 1, press: 0, turn: true, jump: false }, g);
+      skidded = Math.max(skidded, b.skid);
+    }
+    expect(Math.abs(Math.abs(wrap(b.heading)) - Math.PI / 2)).toBeLessThan(0.15);
+    expect(skidded).toBeGreaterThan(0.5);
+    expect(b.speed).toBeLessThan(v0 * 0.6);
+    expect(b.pos.distanceTo(from)).toBeGreaterThan(25); // a long skid, not an instant stop
+  });
+
+  it('S-turns hold the speed down on a steep slope', () => {
+    const g = slope(32);
+    const straight = new Board();
+    const sturn = new Board();
+    for (const b of [straight, sturn]) b.place(0, 0, 0, g);
+    run(straight, g, idle, 12);
+    for (let i = 0; i < 6; i++) run(sturn, g, { lean: i % 2 ? 1 : -1, press: 0, turn: true, jump: false }, 2);
+    expect(sturn.speed).toBeLessThan(straight.speed * 0.6);
   });
 
   it('flies off a lip, lands straight, and crashes landing sideways', () => {

@@ -1,17 +1,16 @@
 import * as THREE from 'three';
 
-// What you see of yourself in first person: the board under your feet and your legs.
+// The rider seen from the chase camera: board, legs, jacket, arms out for balance, helmet.
 // Regular stance (left foot toward the nose); the body faces the toe edge (-x in board
 // space, with the nose along +z) and the head is turned down the hill.
 
 const lambert = (color: number) => new THREE.MeshLambertMaterial({ color, flatShading: true });
 
 export const STANCE = 0.27; // m from the centre to each binding
-export const EYE = 1.45; // m above the board in a riding stance
 
 function buildBoard(): THREE.Group {
   const g = new THREE.Group();
-  const base = lambert(0x1f2a36);
+  const base = lambert(0x1fb5c9); // bright, so the board's direction reads at a glance
   const top = lambert(0xf2f4f7);
   const accent = lambert(0xff5a36);
   const core = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.025, 1.2), base);
@@ -57,6 +56,8 @@ export class Rider {
   readonly root = new THREE.Group();
   readonly board = buildBoard();
   private legs: Array<{ thigh: Segment; shin: Segment; boot: THREE.Mesh; z: number }> = [];
+  private torso = new THREE.Group();
+  private arms: THREE.Mesh[] = [];
 
   constructor(scene: THREE.Scene) {
     this.root.add(this.board);
@@ -70,6 +71,26 @@ export class Rider {
       this.root.add(thigh.mesh, shin.mesh, boot);
       this.legs.push({ thigh, shin, boot, z: s * STANCE });
     }
+    // Upper body faces the toe edge (-x); shoulders lie along the board (z).
+    const red = lambert(0xe2502c);
+    const jacket = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.55, 0.4), red);
+    jacket.position.y = 0.27;
+    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.38, 0.28), lambert(0x2b3440));
+    pack.position.set(0.17, 0.3, 0);
+    const helmet = new THREE.Mesh(new THREE.IcosahedronGeometry(0.14, 1), lambert(0xf2f2f2));
+    helmet.position.set(-0.02, 0.72, 0);
+    const goggles = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.2), lambert(0xffb020));
+    goggles.position.set(-0.13, 0.72, 0);
+    this.torso.add(jacket, pack, helmet, goggles);
+    for (const s of [-1, 1]) {
+      // Each arm reaches out toward its own end of the board.
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.55).translate(0, 0, s * 0.27), red);
+      arm.position.set(0, 0.5, s * 0.2);
+      this.torso.add(arm);
+      this.arms.push(arm);
+    }
+    this.torso.traverse((o) => (o.castShadow = true));
+    this.root.add(this.torso);
     scene.add(this.root);
   }
 
@@ -87,6 +108,14 @@ export class Rider {
     this.root.updateMatrixWorld(true);
     const hipY = 0.86 - crouch * 0.28;
     const hip = new THREE.Vector3(-0.05 - lean * 0.12, hipY, press * 0.12);
+    this.torso.position.copy(hip);
+    // The upper body leans with the weight: toward the toe/heel edge, toward the nose/tail.
+    this.torso.rotation.set(-press * 0.3, 0, lean * 0.3);
+    // Arms out along the board for balance, angled down; the edge raises one and drops the other.
+    this.arms.forEach((arm, i) => {
+      const s = i === 0 ? -1 : 1;
+      arm.rotation.x = s * (0.65 - edge * 0.25);
+    });
     for (const l of this.legs) {
       const foot = new THREE.Vector3(0, 0.12, l.z);
       const top = new THREE.Vector3(hip.x, hip.y, hip.z + l.z * 0.55);
@@ -101,10 +130,5 @@ export class Rider {
       l.boot.position.set(-0.02, 0.1, l.z);
       l.boot.rotation.y = Math.sign(l.z) * 0.25;
     }
-  }
-
-  /** Eye position in world space for the current pose. */
-  eye(crouch: number, out = new THREE.Vector3()): THREE.Vector3 {
-    return out.set(-0.08, EYE - crouch * 0.32, 0.05).applyMatrix4(this.root.matrixWorld);
   }
 }

@@ -4,17 +4,17 @@ import { Board, BoardEvent, wrap } from './board';
 import { SkiControls } from './controls';
 import { Course, FINISH_Z, START_Z } from './course';
 import { Spray, Track } from './fx';
-import { EYE, Rider } from './rider';
+import { Rider } from './rider';
 import { buildSkiScene, followSun } from './scene';
 
 // Mountain-top snowboarding prototype: one run from the summit to the valley, first person.
 
 const STEP = 1 / 120;
-const BASE_FOV = 84;
-// Camera a little behind and above the eyes, tipped down less than a head-cam: more of the
-// mountain in view, the legs and board along the bottom of the screen.
-const CAM_BACK = 0.6; // m
-const CAM_UP = 0.3; // m above eye height
+const BASE_FOV = 70;
+// Chase camera behind and above the rider, so the board's direction is always visible.
+const CAM_BACK = 4.2; // m
+const CAM_UP = 2.2; // m above the board
+const CAM_AHEAD = 7; // m ahead of the rider it looks at
 const CRASH_TIME = 1.8; // s on the ground before getting back up
 const BEST_KEY = 'ski.best';
 
@@ -50,7 +50,7 @@ let crashFor = 0;
 let finishFor = 0;
 let acc = 0;
 const safe = { pos: new THREE.Vector3(), heading: 0, timer: 0 };
-const cam = { yaw: 0, pitch: -0.5, roll: 0, dip: 0 };
+const cam = { yaw: 0, roll: 0, dip: 0, pos: new THREE.Vector3(), look: new THREE.Vector3(), snap: true, lookInit: true };
 let trickLeft = 0;
 
 function readBest(): number {
@@ -81,6 +81,7 @@ function start() {
   safe.pos.copy(board.pos);
   safe.heading = 0;
   cam.yaw = 0;
+  cam.snap = cam.lookInit = true;
   clock = 0;
   countdown = 3;
   state = 'countdown';
@@ -113,6 +114,7 @@ function crash() {
 function respawn() {
   board.place(safe.pos.x, safe.pos.z, safe.heading, course);
   cam.yaw = safe.heading;
+  cam.snap = cam.lookInit = true;
   state = 'run';
   $('hint').textContent = '';
   track.add(board.pos, board.forward(), 0, true);
@@ -207,38 +209,43 @@ function updateCamera(dt: number) {
     // Nearly stopped: look along whichever end of the board is closer to the current view.
     want = Math.abs(wrap(board.heading - cam.yaw)) < Math.PI / 2 ? board.heading : wrap(board.heading + Math.PI);
   }
-  cam.yaw = wrap(cam.yaw + wrap(want - cam.yaw) * Math.min(1, dt * (flat > 2 ? 5 : 2)));
+  cam.yaw = wrap(cam.yaw + wrap(want - cam.yaw) * Math.min(1, dt * (flat > 2 ? 3 : 1.5)));
   travel.set(Math.sin(cam.yaw), 0, Math.cos(cam.yaw));
   const n = board.normal;
-  let pitch: number;
-  if (board.grounded) {
-    const drop = -(n.x * travel.x + n.z * travel.z) / n.y; // dh per metre along travel
-    pitch = Math.atan(drop) * 0.8 - 0.42;
-  } else pitch = Math.atan2(v.y, Math.max(flat, 1)) * 0.4 - 0.46;
-  cam.pitch += (pitch - cam.pitch) * Math.min(1, dt * 4);
-  cam.roll += (board.edge * 0.18 - cam.roll) * Math.min(1, dt * 5);
+  cam.roll += (board.edge * 0.06 - cam.roll) * Math.min(1, dt * 5);
   cam.dip *= Math.exp(-dt * 6);
 
-  const crouch = controls.input.jump ? board.charge / 0.45 : Math.max(0, controls.input.press) * 0.35;
-  const eyeH = EYE + CAM_UP - crouch * 0.32 - cam.dip;
-  camera.position.copy(board.pos).addScaledVector(n, eyeH).addScaledVector(travel, -CAM_BACK);
+  // Chase position behind and above, eased so turns swing the rider across the view.
+  const wantPos = board.pos.clone().addScaledVector(travel, -CAM_BACK);
+  wantPos.y += CAM_UP - cam.dip;
+  if (cam.snap) {
+    cam.pos.copy(wantPos);
+    cam.snap = false;
+  } else cam.pos.lerp(wantPos, Math.min(1, dt * 8));
+  camera.position.copy(cam.pos);
   // Never let the camera dip into the slope behind the rider.
-  camera.position.y = Math.max(camera.position.y, course.height(camera.position.x, camera.position.z) + 0.6);
-  let roll = cam.roll;
-  let p = cam.pitch;
-  if (state === 'crash') {
-    const t = Math.min(1, crashFor / 0.6);
-    roll += t * 1.4;
-    p -= t * 0.5;
-    camera.position.y -= t * 1.1;
-  }
-  const shake = board.grounded ? Math.min(1, board.speed / 30) ** 2 * 0.006 : 0;
-  camera.rotation.set(p + (Math.random() - 0.5) * shake, cam.yaw + Math.PI + (Math.random() - 0.5) * shake, roll);
-  camera.fov = BASE_FOV + Math.min(14, board.speed * 0.4);
+  camera.position.y = Math.max(camera.position.y, course.height(camera.position.x, camera.position.z) + 0.8);
+  // Look at the snow a little ahead, so steep pitches tip the view down the slope.
+  const ahead = board.pos.clone().addScaledVector(travel, CAM_AHEAD);
+  const snow = course.height(ahead.x, ahead.z) + 0.8;
+  ahead.y = board.grounded ? Math.min(board.pos.y + 0.8, snow) : Math.min(board.pos.y + 0.5, Math.max(snow, board.pos.y - 6));
+  cam.look.lerp(ahead, cam.lookInit ? 1 : Math.min(1, dt * 6));
+  cam.lookInit = false;
+  camera.lookAt(cam.look);
+  camera.rotateZ(cam.roll);
+  const shake = board.grounded ? Math.min(1, board.speed / 30) ** 2 * 0.004 : 0;
+  camera.rotateX((Math.random() - 0.5) * shake);
+  camera.fov = BASE_FOV + Math.min(12, board.speed * 0.35);
   camera.updateProjectionMatrix();
 
-  rider.root.visible = state !== 'crash';
+  const crouch = controls.input.jump ? board.charge / 0.45 : Math.max(0, controls.input.press) * 0.35;
+  rider.root.visible = true;
   rider.pose(board.pos, board.heading, n, board.edge, crouch, controls.input.lean, controls.input.press);
+  if (state === 'crash') {
+    // Tumble over onto the snow.
+    rider.root.rotateZ(Math.min(1, crashFor / 0.5) * 1.35);
+    rider.root.rotateY(crashFor * 2 * Math.exp(-crashFor * 2));
+  }
 }
 
 function updateFx(dt: number) {
@@ -246,7 +253,7 @@ function updateFx(dt: number) {
   if (board.grounded && state === 'run' && board.speed > 2) {
     const dir = new THREE.Vector3(v.x, 0, v.z).normalize();
     track.add(board.pos, dir, 0.27 + board.skid * 1.1);
-    const rate = board.skid * 260 + Math.abs(board.edge) * board.speed * 4 + (board.speed > 15 ? 10 : 0);
+    const rate = board.skid * 160 + Math.abs(board.edge) * board.speed * 2.5;
     if (rate > 5) spray.emit(dt, rate, board.pos, dir, v);
   }
   spray.update(dt);

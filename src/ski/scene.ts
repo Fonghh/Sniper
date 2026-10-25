@@ -173,6 +173,7 @@ function gate(course: Course, z: number, text: string, color: string): THREE.Gro
     g.add(p);
   }
   const b = banner(text, color);
+  b.rotation.y = Math.PI; // face the riders coming down (-z)
   b.position.set(x, course.height(x, z) + 4.6, z);
   g.add(b);
   return g;

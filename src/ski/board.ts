@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 
 // Snowboard physics. Gravity pulls along the slope, snow friction and air drag slow you,
-// and the board's edge decides where the speed goes:
-//  - carving (lean): the board turns on its edge and the velocity follows it, little speed lost;
-//  - skidding (turn + lean): the board is thrown sideways toward the lean and scrubs speed
-//    while the path curves that way;
-//  - braking (turn + lean back): the board goes fully across the slope and stops you.
-// Leaving the ground happens naturally off lips and rollers; the jump button adds an ollie.
+// and the board's angle to the fall line decides where the speed goes:
+//  - lean alone: the board turns a little off the fall line (up to ~35°), a gentle turn;
+//  - turn + lean: the board goes further, up to straight across the slope (a hard turn);
+//  - turn + lean back: the board goes square across and slides, braking.
+// The path follows the board only as fast as the edge can grip; the rest is a sideways
+// slide that scrubs speed, so a hard turn at high speed becomes a long skid. Leaving the
+// ground happens naturally off lips and rollers; the jump button adds an ollie.
 
 export interface Ground {
   height(x: number, z: number): number;
@@ -23,23 +24,25 @@ export interface BoardInput {
 export const PHYS = {
   g: 9.81,
   glide: 0.045, // snow friction while running flat on the base
-  skid: 0.32,
-  brake: 0.75,
+  skidFriction: 0.75, // extra friction when the board slides fully sideways
+  brakeFriction: 0.85,
   drag: 0.0055, // 1/m, standing
   dragTuck: 0.0036, // pressing the nose, crouched
   dragBack: 0.0075,
-  carveRadius: 8, // m at full lean
-  maxCarveAccel: 13, // m/s², lateral grip limit
-  pivotRate: 1.8, // rad/s turning while nearly stopped
-  edgeRate: 7, // rad/s the board swings when thrown sideways
+  grip: 8, // m/s², sideways force the edge can hold while turning
+  brakeGrip: 0.8, // braking lets the board slide
+  gentleAngle: 0.6, // rad off the fall line at full lean without the turn button (~35°)
+  swingSlow: 2.4, // rad/s the board swings when slow
+  swingFast: 1.3, // rad/s at 25 m/s
+  pivotRate: 1.8, // rad/s turning on the flat
   pop: 3.2, // m/s ollie
   popCharged: 5.5,
   charge: 0.45, // s to a full crouch
   airSpin: 7.5, // rad/s spinning with the turn button in the air
-  airSteer: 1.6,
+  airSteer: 0.3, // rad/s: leaning in the air barely turns the board (the turn button spins it)
   crashImpact: 15, // m/s into the slope
   crashAngle: 0.95, // rad: landing more sideways than this is a fall
-  push: 1.4, // m/s² skating on the flat
+  push: 2.5, // m/s² skating on the flat
   airGap: 0.35, // m off the snow before it counts as airborne (small hops stay 'riding')
 };
 
@@ -100,7 +103,7 @@ export class Board {
 
     const n0 = ground.normal(this.pos.x, this.pos.z, tmpN);
     this.normal.set(n0.x, n0.y, n0.z);
-    if (this.grounded) this.groundControl(dt, input, pop);
+    if (this.grounded) this.groundControl(dt, input, pop, ground);
     else this.airControl(dt, input);
 
     // Full gravity; the snow pushes back only when the board would sink into it, so the board
@@ -131,58 +134,70 @@ export class Board {
     return Math.max(0, -into);
   }
 
-  private groundControl(dt: number, input: BoardInput, pop: number) {
+  private groundControl(dt: number, input: BoardInput, pop: number, ground: Ground) {
     const n = this.normal;
     const along = this.vel.clone().addScaledVector(n, -this.vel.dot(n));
     const speed = along.length();
     const velYaw = speed > 0.3 ? Math.atan2(along.x, along.z) : this.heading;
-    // Which end of the board leads (riding switch is fine).
-    const switchStance = Math.abs(wrap(velYaw - this.heading)) > Math.PI / 2;
-    const leadYaw = switchStance ? wrap(this.heading + Math.PI) : this.heading;
-
-    let mu = PHYS.glide;
-    let dragK = PHYS.drag;
     const press = input.press;
     const lean = Math.abs(input.lean) > 0.12 ? input.lean : 0;
+    // The slope's fall line, measured over a few metres so bumps don't swing it around.
+    const e = 3;
+    const gx = (ground.height(this.pos.x + e, this.pos.z) - ground.height(this.pos.x - e, this.pos.z)) / (2 * e);
+    const gz = (ground.height(this.pos.x, this.pos.z + e) - ground.height(this.pos.x, this.pos.z - e)) / (2 * e);
+    const fallYaw = Math.atan2(-gx, -gz);
+    // Steer against the fall line only on a real slope while moving; otherwise pivot.
+    const onSlope = Math.hypot(gx, gz) > 0.12 && speed > 2; // steeper than ~7°
+    // The board swings quickly when slow, more slowly at speed.
+    const rate = PHYS.swingSlow + (PHYS.swingFast - PHYS.swingSlow) * Math.min(1, speed / 25);
+    let grip = PHYS.grip;
+    let slide = PHYS.skidFriction;
 
-    if (input.turn) {
-      let target: number;
-      if (press < -0.35 || lean === 0) {
-        // Brake: square across the travel direction, on whichever side is closer.
-        const side = wrap(this.heading - velYaw) >= 0 ? 1 : -1;
-        target = velYaw + side * (Math.PI / 2);
-        mu = press < -0.35 ? PHYS.brake : PHYS.skid;
-      } else {
-        // Skid turn: the board swings toward the lean and the path bends that way.
-        // Lean right (+) turns right, which is toward -x when facing +z: yaw decreases.
-        const dir = lean > 0 ? -1 : 1;
-        target = velYaw + dir * 1.25;
-        mu = PHYS.skid;
-        this.vel.applyAxisAngle(n, dir * Math.min(1.5, 0.6 + speed * 0.05) * Math.abs(lean) * dt);
-      }
-      this.heading = approachAngle(this.heading, target, PHYS.edgeRate * dt, true);
+    if (input.turn && (press < -0.35 || lean === 0)) {
+      // Brake: board square to the fall line on the nearer side, sliding sideways.
+      const ref = onSlope ? fallYaw : velYaw;
+      const side = wrap(this.heading - ref) >= 0 ? 1 : -1;
+      this.heading = approachAngle(this.heading, ref + side * (Math.PI / 2), rate * 1.4 * dt, true);
+      grip = PHYS.brakeGrip;
+      slide = PHYS.brakeFriction;
+    } else if (onSlope) {
+      // The stick sets the board's angle to the fall line: a little on its own (a gentle
+      // turn), up to straight across with the turn button (a hard turn / traverse).
+      // Lean right (+) turns right, toward -x when facing +z: the yaw decreases.
+      const angle = input.turn
+        ? Math.sign(lean) * (PHYS.gentleAngle + (Math.PI / 2 - PHYS.gentleAngle) * Math.abs(lean))
+        : lean * PHYS.gentleAngle;
+      // The target is for the leading end; riding switch, the nose points the other way.
+      const ridingSwitch = speed > 0.3 && Math.abs(wrap(velYaw - this.heading)) > Math.PI / 2;
+      const target = fallYaw - angle + (ridingSwitch ? Math.PI : 0);
+      this.heading = approachAngle(this.heading, target, rate * dt);
     } else {
-      // Carve on the edge: the radius shrinks with lean, limited by grip at speed.
-      const rate =
-        speed < 3 ? -lean * PHYS.pivotRate : -lean * Math.min(speed / PHYS.carveRadius, PHYS.maxCarveAccel / speed);
-      this.heading = wrap(this.heading + rate * dt);
-      // The velocity follows the board's leading end.
-      const want = switchStance ? wrap(this.heading + Math.PI) : this.heading;
-      if (speed > 0.3) {
-        const turn = clampAbs(wrap(want - velYaw), 6 * dt);
-        this.vel.applyAxisAngle(n, turn);
-        this.vel.multiplyScalar(1 - Math.abs(turn) * 0.04);
-      }
-      if (press > 0) {
-        mu -= 0.012 * press;
-        dragK = PHYS.drag + (PHYS.dragTuck - PHYS.drag) * press;
-      } else if (press < 0) {
-        mu += 0.05 * -press;
-        dragK = PHYS.drag + (PHYS.dragBack - PHYS.drag) * -press;
-      }
+      // Flat or slow: no useful fall line, so the stick pivots the board directly.
+      this.heading = wrap(this.heading - lean * Math.min(PHYS.pivotRate, PHYS.grip / Math.max(speed, 1)) * dt);
     }
-    this.edge += ((input.turn ? 0 : -lean) - this.edge) * Math.min(1, dt * 6);
-    this.skid = Math.abs(Math.sin(wrap(leadYaw - velYaw))) * Math.min(1, speed / 4);
+
+    // The path follows the board's leading end only as fast as the edge can grip
+    // (ω = a / v). Whatever it can't follow becomes a sideways slide that scrubs speed, so
+    // throwing the board across at high speed means a long skid.
+    const switchStance = Math.abs(wrap(velYaw - this.heading)) > Math.PI / 2;
+    const leadYaw = switchStance ? wrap(this.heading + Math.PI) : this.heading;
+    let slip = 0;
+    if (speed > 0.3) {
+      const turn = clampAbs(wrap(leadYaw - velYaw), (grip / Math.max(speed, 1)) * dt);
+      this.vel.applyAxisAngle(n, turn);
+      slip = Math.abs(Math.sin(wrap(leadYaw - velYaw - turn)));
+    }
+    let mu = PHYS.glide + slide * slip;
+    let dragK = PHYS.drag;
+    if (press > 0 && !input.turn) {
+      mu -= 0.012 * press;
+      dragK = PHYS.drag + (PHYS.dragTuck - PHYS.drag) * press;
+    } else if (press < 0 && !input.turn) {
+      mu += 0.05 * -press;
+      dragK = PHYS.drag + (PHYS.dragBack - PHYS.drag) * -press;
+    }
+    this.edge += (-lean * (input.turn ? 1 : 0.7) - this.edge) * Math.min(1, dt * 6);
+    this.skid = slip * Math.min(1, speed / 4);
 
     // Snow friction (scaled by how hard the slope presses back) and air drag on the motion
     // along the surface.
@@ -195,7 +210,7 @@ export class Board {
       this.vel.copy(t).addScaledVector(n, normalPart);
     }
     // Skating push on the flat.
-    if (press > 0.3 && v < 3 && !input.turn) {
+    if (press > 0.3 && v < 4 && !input.turn) {
       const f = this.forward();
       f.addScaledVector(n, -f.dot(n)).normalize();
       this.vel.addScaledVector(f, PHYS.push * press * dt);
