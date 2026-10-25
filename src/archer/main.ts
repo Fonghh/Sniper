@@ -2,17 +2,20 @@ import * as THREE from 'three';
 import { ArenaAudio } from '../arena/audio';
 import { lobAngle } from '../arena/monsters';
 import { ProjectileState, STEP, stepProjectile } from '../arena/projectile';
-import { ArenaWorld } from '../arena/world';
+import { Trail } from '../arena/trails';
 import { mulberry32 } from '../world/random';
 import { Arrows, ArrowHit } from './arrows';
 import { Enemy, EnemyKind, waveHp, waveRoster } from './enemies';
 import { Fx } from './fx';
+import { Level, Zone } from './level';
 import { SKILLS, SkillId, Taken, bowStats, drawCards, rankFor } from './skills';
 import { BowView } from './viewmodel';
 
 // Archer: first-person bow against waves of chibi monsters. Move with the left thumb, drag
 // to aim with the right; while the right thumb is down the bow fires on its own rhythm.
-// Between waves, pick one of three skill cards; they stack into a build.
+// The level runs forward: each clearing is a wave that comes at you from ahead (archers and
+// bombers up on platforms), then a skill card, then the gate opens and you push on.
+// The dodge button dashes the way the stick points, invulnerable while dashing.
 
 const SEED = 11;
 const MOVE_SPEED = 5.5; // m/s
@@ -22,6 +25,11 @@ const MOUSE = 0.0024;
 const MAX_ALIVE = 18;
 const BOMB_RADIUS = 2.8;
 const BEST_KEY = 'archer.best';
+const DASH_SPEED = 15; // m/s
+const DASH_TIME = 0.22; // s
+const DASH_GRACE = 0.12; // s of invulnerability after the dash
+const DASH_COOLDOWN = 0.9;
+const ENEMY_ARROW_SPEED = 30;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const app = $('app');
@@ -34,7 +42,8 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, 9 / 16, 0.03, 900);
 camera.rotation.order = 'YXZ';
 scene.add(camera);
-const world = new ArenaWorld(scene, SEED);
+const world = new Level(scene, SEED);
+world.ensure(2);
 const fx = new Fx(scene);
 const audio = new ArenaAudio();
 const view = new BowView(camera);
@@ -42,7 +51,21 @@ const rand = mulberry32(SEED + 5);
 
 let enemies: Enemy[] = [];
 const arrows = new Arrows(scene, world, () => enemies, fx);
-const player = { pos: new THREE.Vector3(), yaw: Math.PI, pitch: 0, hp: 100, maxHp: 100, hurtCd: 0, moving: 0 };
+const player = {
+  pos: new THREE.Vector3(),
+  yaw: Math.PI,
+  pitch: 0,
+  hp: 100,
+  maxHp: 100,
+  hurtCd: 0,
+  moving: 0,
+  dash: 0, // s of dash left
+  dashCd: 0,
+  invuln: 0,
+  dashDir: new THREE.Vector3(),
+};
+let zone: Zone | null = null; // the clearing being fought (or just cleared)
+let advancing = false; // gate open, walking to the next clearing
 type State = 'menu' | 'fight' | 'cards' | 'over';
 let state: State = 'menu';
 let taken: Taken = {};
@@ -63,6 +86,7 @@ const counted = new Set<Enemy>();
 
 // ---------- Input ----------
 const input = { x: 0, y: 0, firing: false, yaw: 0, pitch: 0 };
+let dodgeRequested = false;
 const keys = new Set<string>();
 const isTouch = matchMedia('(pointer: coarse)').matches;
 if (isTouch) document.body.classList.add('touch');
@@ -139,8 +163,14 @@ addEventListener('mousemove', (e) => {
   input.yaw -= e.movementX * MOUSE * 1.2;
   input.pitch -= e.movementY * MOUSE;
 });
+$('btn-dodge').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  dodgeRequested = true;
+});
 addEventListener('keydown', (e) => {
   keys.add(e.code);
+  if (e.code === 'Space' || e.code === 'ShiftLeft') dodgeRequested = true;
   if (e.code === 'Escape') showMenu();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -158,7 +188,7 @@ function floater(p: THREE.Vector3, text: string, cls = '') {
 
 const indicators: Array<{ el: HTMLElement; from: THREE.Vector3; t: number }> = [];
 function hurt(amount: number, from: THREE.Vector3) {
-  if (state !== 'fight' || player.hurtCd > 0) return;
+  if (state !== 'fight' || player.hurtCd > 0 || player.invuln > 0) return;
   player.hp -= amount;
   player.hurtCd = 0.3;
   shake = Math.max(shake, 0.5);
@@ -257,6 +287,90 @@ function updateBombs(dt: number) {
   bombs = bombs.filter((b) => b.state.time >= 0);
 }
 
+// ---------- Enemy arrows ----------
+interface EnemyArrow {
+  state: ProjectileState;
+  mesh: THREE.Mesh;
+  trail: Trail;
+  damage: number;
+  from: THREE.Vector3;
+}
+let enemyArrows: EnemyArrow[] = [];
+const enemyArrowGeo = new THREE.BoxGeometry(0.05, 0.05, 0.8).translate(0, 0, -0.4);
+const enemyArrowMat = new THREE.MeshBasicMaterial({ color: 0xff3b30 });
+const playerVel = new THREE.Vector3();
+const lastPos = new THREE.Vector3();
+
+// A bobbing arrow over the open gate pointing the way on.
+const marker = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.4, 4).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffd23c }));
+marker.visible = false;
+scene.add(marker);
+
+/** An archer looses at the player, leading them a little and allowing for drop, not perfectly. */
+function shoot(from: THREE.Vector3, damage: number) {
+  const chest = player.pos.clone().setY(1.1);
+  const d = chest.distanceTo(from);
+  const tof = d / ENEMY_ARROW_SPEED;
+  const aim = chest.addScaledVector(playerVel, tof * 0.7);
+  aim.y += 0.5 * 9.81 * tof * tof;
+  aim.add(new THREE.Vector3((rand() - 0.5) * 1.2, (rand() - 0.5) * 0.6, (rand() - 0.5) * 1.2));
+  const v = aim.sub(from).normalize().multiplyScalar(ENEMY_ARROW_SPEED);
+  const mesh = new THREE.Mesh(enemyArrowGeo, enemyArrowMat);
+  mesh.position.copy(from);
+  scene.add(mesh);
+  const trail = new Trail(0xff5a4a, 0.5, 0.12, 0.003, 6);
+  scene.add(trail.mesh);
+  enemyArrows.push({ state: { pos: { x: from.x, y: from.y, z: from.z }, vel: { x: v.x, y: v.y, z: v.z }, time: 0 }, mesh, trail, damage, from: from.clone() });
+  audio.play('bow', from.distanceTo(player.pos));
+}
+
+let enemyArrowAcc = 0;
+function updateEnemyArrows(dt: number) {
+  enemyArrowAcc = Math.min(enemyArrowAcc + dt, 0.1);
+  const steps = Math.floor(enemyArrowAcc / STEP);
+  enemyArrowAcc -= steps * STEP;
+  const chest = player.pos.clone().setY(1.0);
+  const seg = new THREE.Line3();
+  const closest = new THREE.Vector3();
+  for (const a of enemyArrows) {
+    for (let i = 0; i < steps && a.state.time >= 0; i++) {
+      const p0 = a.state.pos;
+      const next = stepProjectile(a.state, { drag: 0.0015, gravity: 9.81 });
+      seg.set(new THREE.Vector3(p0.x, p0.y, p0.z), new THREE.Vector3(next.pos.x, next.pos.y, next.pos.z));
+      seg.closestPointToPoint(chest, true, closest);
+      if (closest.distanceTo(chest) < 0.55) {
+        if (player.invuln > 0) floater(closest, '閃過', 'block');
+        else hurt(a.damage, a.from);
+        a.state.time = -1;
+        break;
+      }
+      const wall = world.collide(p0, next.pos);
+      if (wall || next.time > 4) {
+        a.state.time = -1;
+        break;
+      }
+      a.state = next;
+      if (i % 3 === 0) a.trail.add(next.pos);
+    }
+    const p = a.state.pos;
+    a.mesh.position.set(p.x, p.y, p.z);
+    a.mesh.lookAt(p.x + a.state.vel.x, p.y + a.state.vel.y, p.z + a.state.vel.z);
+    if (a.state.time < 0) {
+      scene.remove(a.mesh);
+      a.trail.finish();
+    }
+    if (!a.trail.update(dt, camera.position)) a.state.time = -2;
+  }
+  enemyArrows = enemyArrows.filter((a) => {
+    if (a.state.time === -2) {
+      scene.remove(a.mesh, a.trail.mesh);
+      a.trail.dispose();
+      return false;
+    }
+    return true;
+  });
+}
+
 // ---------- Arrows hitting things ----------
 arrows.onHit = (h: ArrowHit) => {
   if (h.part === 'shield') {
@@ -294,23 +408,40 @@ function volley() {
 }
 
 // ---------- Waves ----------
-function spawnSpot(): THREE.Vector3 {
-  const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-  let best = world.randomOpenSpot(rand, 1.5, 52);
-  for (let i = 0; i < 30; i++) {
-    const p = world.randomOpenSpot(rand, 1.5, 52);
-    const to = p.clone().sub(player.pos).setY(0);
-    const d = to.length();
-    // Prefer coming from in front, far enough to see them run in.
-    if (d > 15 && d < 30 && to.normalize().dot(fwd) > 0.4) return p;
-    if (d > 15) best = p;
+/** A ground spot at the far end of the clearing, so they come at you from ahead. */
+function groundSpot(z: Zone): THREE.Vector3 {
+  const p = new THREE.Vector3();
+  for (let i = 0; i < 20; i++) {
+    p.set((rand() - 0.5) * (z.half * 2 - 4), 0, z.z1 - 3 - rand() * 10);
+    const q = p.clone();
+    world.resolve(q, 0.6);
+    if (q.distanceTo(p) < 0.01) return p;
   }
-  return best;
+  return p.set(0, 0, z.z1 - 4);
 }
+
+/** Free standing spots on the clearing's platforms (two per platform). */
+function perches(z: Zone): Array<{ at: THREE.Vector3; y: number }> {
+  const out: Array<{ at: THREE.Vector3; y: number }> = [];
+  for (const p of z.platforms) {
+    const cx = (p.min.x + p.max.x) / 2;
+    const cz = (p.min.z + p.max.z) / 2;
+    for (const dx of [-0.9, 0.9]) out.push({ at: new THREE.Vector3(cx + dx, p.max.y + 0.25, cz), y: p.max.y + 0.25 });
+  }
+  return out;
+}
+
+let freePerches: Array<{ at: THREE.Vector3; y: number }> = [];
 
 function startWave() {
   wave += 1;
+  world.ensure(wave + 2);
+  zone = world.zones[wave - 1];
+  advancing = false;
+  freePerches = perches(zone);
   queue = waveRoster(wave);
+  // Shooters that will stand on platforms come first, the rest run in.
+  queue.sort((a, b) => Number(b === 'archer' || b === 'bomber') - Number(a === 'archer' || a === 'bomber'));
   spawnCd = 0.8;
   clearFor = -1;
   state = 'fight';
@@ -318,11 +449,18 @@ function startWave() {
 }
 
 function spawnTick(dt: number) {
+  if (advancing || !zone) {
+    // Walk on: the next fight starts once you step into the next clearing.
+    const next = world.zones[wave];
+    if (advancing && next && player.pos.z > next.z0 + 3) startWave();
+    return;
+  }
   spawnCd -= dt;
   const alive = enemies.filter((e) => e.alive).length;
   if (queue.length && spawnCd <= 0 && alive < MAX_ALIVE) {
     const kind = queue.shift()!;
-    const e = new Enemy(kind, spawnSpot(), waveHp(wave));
+    const perch = (kind === 'archer' || kind === 'bomber') && freePerches.length ? freePerches.shift()! : null;
+    const e = new Enemy(kind, perch ? perch.at : groundSpot(zone), waveHp(wave), perch ? perch.y : null);
     enemies.push(e);
     scene.add(e.model.root);
     fx.puff(e.position.clone().setY(e.position.y + 0.5), 0xffffff, 8, 1);
@@ -371,7 +509,12 @@ function pick(id: SkillId) {
   renderSkills();
   $('cards').classList.remove('show');
   audio.play('reload');
-  startWave();
+  // Open the way forward.
+  state = 'fight';
+  if (zone) world.openGate(zone);
+  advancing = true;
+  clearFor = -1;
+  banner('前進！', 2);
 }
 
 // ---------- Game flow ----------
@@ -381,8 +524,13 @@ function clearAll() {
     scene.remove(b.mesh);
     b.ring.done();
   }
+  for (const a of enemyArrows) {
+    scene.remove(a.mesh, a.trail.mesh);
+    a.trail.dispose();
+  }
   enemies = [];
   bombs = [];
+  enemyArrows = [];
   counted.clear();
   arrows.clear();
   $('floaters').replaceChildren();
@@ -397,8 +545,12 @@ function start() {
   taken = {};
   stats = bowStats(taken);
   view.crossbowMode = false;
-  Object.assign(player, { hp: 100, maxHp: 100, hurtCd: 0, yaw: Math.PI, pitch: 0 });
-  player.pos.copy(world.at(0, -30));
+  Object.assign(player, { hp: 100, maxHp: 100, hurtCd: 0, yaw: Math.PI, pitch: 0, dash: 0, dashCd: 0, invuln: 0 });
+  player.pos.set(0, 0, 4);
+  lastPos.copy(player.pos);
+  world.reset();
+  zone = null;
+  advancing = false;
   wave = cleared = kills = score = volleys = 0;
   renderSkills();
   $('rank').textContent = '';
@@ -462,6 +614,7 @@ const enemyCtx = {
   rand,
   hurt,
   lob,
+  shoot,
 };
 
 function updatePlayer(dt: number) {
@@ -481,11 +634,33 @@ function updatePlayer(dt: number) {
   }
   const fx_ = -Math.sin(player.yaw);
   const fz = -Math.cos(player.yaw);
-  player.pos.x += (my * fx_ - mx * fz) * MOVE_SPEED * dt;
-  player.pos.z += (my * fz + mx * fx_) * MOVE_SPEED * dt;
+  const wx = my * fx_ - mx * fz;
+  const wz = my * fz + mx * fx_;
+  // Dodge: a short burst the way the stick points (backwards if it is centred).
+  if (dodgeRequested && player.dashCd <= 0) {
+    if (len > 0.2) player.dashDir.set(wx, 0, wz).normalize();
+    else player.dashDir.set(-fx_, 0, -fz);
+    player.dash = DASH_TIME;
+    player.dashCd = DASH_COOLDOWN;
+    player.invuln = DASH_TIME + DASH_GRACE;
+    audio.play('throw');
+    fx.puff(player.pos.clone().setY(0.3), 0xe8d2b0, 6, 1);
+  }
+  dodgeRequested = false;
+  if (player.dash > 0) {
+    player.dash -= dt;
+    player.pos.addScaledVector(player.dashDir, DASH_SPEED * dt);
+  } else {
+    player.pos.x += wx * MOVE_SPEED * dt;
+    player.pos.z += wz * MOVE_SPEED * dt;
+  }
   world.resolve(player.pos, 0.35);
-  player.moving = Math.min(1, len);
+  playerVel.copy(player.pos).sub(lastPos).divideScalar(Math.max(dt, 1e-4));
+  lastPos.copy(player.pos);
+  player.moving = player.dash > 0 ? 1.5 : Math.min(1, len);
   player.hurtCd = Math.max(0, player.hurtCd - dt);
+  player.dashCd = Math.max(0, player.dashCd - dt);
+  player.invuln = Math.max(0, player.invuln - dt);
 }
 
 function tick(dt: number) {
@@ -524,6 +699,8 @@ function tick(dt: number) {
     return !e.removed;
   });
   updateBombs(dt);
+  updateEnemyArrows(dt);
+  world.update(dt, player.pos);
   arrows.update(dt, camera.position);
 }
 
@@ -571,16 +748,25 @@ function frame(now: number) {
   if (state !== 'menu') {
     fx.update(dt);
     camera.position.copy(player.pos).setY(player.pos.y + EYE);
+    // A quick widening of the view while dashing.
+    camera.fov += ((player.dash > 0 ? 82 : 70) - camera.fov) * Math.min(1, real * 12);
+    camera.updateProjectionMatrix();
+    marker.visible = advancing && !!zone;
+    if (zone && marker.visible) marker.position.set(0, 2.2 + Math.sin(now / 200) * 0.3, (zone.gate.min.z + zone.gate.max.z) / 2 + 2);
+    const cd = $('btn-dodge');
+    cd.classList.toggle('cooling', player.dashCd > 0);
+    cd.style.setProperty('--cd', `${(player.dashCd / DASH_COOLDOWN) * 100}%`);
     shake *= Math.exp(-real * 6);
     camera.rotation.set(player.pitch + (Math.random() - 0.5) * shake * 0.06, player.yaw + (Math.random() - 0.5) * shake * 0.06, 0);
     const draw = Math.min(1, fireTimer / stats.interval);
     view.update(dt, input.firing ? draw : Math.min(draw, 0.6), player.moving);
     updateHud(real);
   } else {
-    const a = now / 9000;
-    const c = world.at(0, 0);
-    camera.position.set(c.x + Math.sin(a) * 40, c.y + 14, c.z + Math.cos(a) * 40);
-    camera.lookAt(c.x, c.y, c.z);
+    // Menu backdrop: drift along the first clearings.
+    const z = 10 + ((now / 1000) * 4) % 80;
+    camera.position.set(Math.sin(now / 4000) * 4, 6, z);
+    camera.lookAt(0, 1, z + 25);
+    world.update(0, camera.position);
   }
   view.group.visible = state !== 'menu';
   renderer.render(scene, camera);

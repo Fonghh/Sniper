@@ -41,3 +41,29 @@ describe('archer waves', () => {
     expect(waveHp(5)).toBeGreaterThan(waveHp(1));
   });
 });
+
+import { CORRIDOR_LEN, STRIDE, ZONE_LEN, zoneLayout } from '../src/archer/level';
+
+describe('archer level', () => {
+  it('runs forward in clearings with a gate in each corridor', () => {
+    for (let i = 0; i < 6; i++) {
+      const { zone } = zoneLayout(11, i);
+      expect(zone.z0).toBe(i * STRIDE);
+      expect(zone.z1).toBe(zone.z0 + ZONE_LEN);
+      const gz = (zone.gate.min.z + zone.gate.max.z) / 2;
+      expect(gz).toBeGreaterThan(zone.z1);
+      expect(gz).toBeLessThan(zone.z1 + CORRIDOR_LEN);
+    }
+  });
+
+  it('has platforms for shooters from the second clearing, and forks every third', () => {
+    expect(zoneLayout(11, 0).zone.platforms.length).toBe(0);
+    for (let i = 1; i < 8; i++) {
+      const { zone } = zoneLayout(11, i);
+      expect(zone.platforms.length).toBeGreaterThan(0);
+      for (const p of zone.platforms) expect(p.max.y).toBeGreaterThanOrEqual(3.5);
+    }
+    expect(zoneLayout(11, 2).zone.fork).toBe(true);
+    expect(zoneLayout(11, 2).boxes.some((b) => b.kind === 'block')).toBe(true);
+  });
+});

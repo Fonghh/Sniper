@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { ProjectileState, STEP, stepProjectile } from '../arena/projectile';
 import { Trail } from '../arena/trails';
-import type { ArenaWorld } from '../arena/world';
+import type { WorldLike } from './level';
 import type { Enemy, HitPart } from './enemies';
 import type { Fx } from './fx';
 import type { BowStats } from './skills';
@@ -73,7 +73,7 @@ export class Arrows {
 
   constructor(
     private scene: THREE.Scene,
-    private world: ArenaWorld,
+    private world: WorldLike,
     private enemies: () => Enemy[],
     private fx: Fx,
   ) {}
@@ -83,7 +83,8 @@ export class Arrows {
     const mesh = arrowMesh(giant, stats.crossbow);
     mesh.position.copy(origin);
     this.scene.add(mesh);
-    const trail = new Trail(trailColor(stats, giant), giant ? 0.9 : 0.6, 0.5, giant ? 0.012 : 0.004);
+    // A short streak behind the arrow (about 4 m) that vanishes quickly, so it never blocks the view.
+    const trail = new Trail(trailColor(stats, giant), giant ? 0.7 : 0.45, 0.12, giant ? 0.008 : 0.0025, giant ? 9 : 6);
     this.scene.add(trail.mesh);
     this.trails.push(trail);
     this.live.push({

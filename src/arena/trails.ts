@@ -35,6 +35,7 @@ export class Trail {
     private opacity: number,
     private life: number, // s to fade after landing
     private width = 0.0045, // half-width per metre of distance (≈ radians of view)
+    private keep = Infinity, // only the newest points: a short streak instead of the whole path
   ) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
@@ -47,7 +48,8 @@ export class Trail {
   }
 
   add(p: { x: number; y: number; z: number }) {
-    if (this.pts.length >= MAX_POINTS) this.pts.splice(1, 1); // thin out the middle
+    if (this.pts.length >= this.keep) this.pts.shift();
+    else if (this.pts.length >= MAX_POINTS) this.pts.splice(1, 1); // thin out the middle
     this.pts.push(new THREE.Vector3(p.x, p.y, p.z));
   }
 

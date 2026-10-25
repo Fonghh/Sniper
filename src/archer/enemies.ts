@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { segmentBox, sphereEntry } from '../arena/hitbox';
 import type { V3 } from '../arena/projectile';
-import type { ArenaWorld } from '../arena/world';
+import type { WorldLike } from './level';
 
 // Chibi monsters: a big round head (the weak spot) on a small round body. They charge the
 // player; shield bearers block arrows from the front (lob one over the top), bombers keep
-// their distance and lob bombs with a warning ring, tanks and bosses soak up damage.
+// their distance and lob bombs with a warning ring, archers shoot arrows (often from up on a
+// platform), tanks and bosses soak up damage.
 
-export type EnemyKind = 'grunt' | 'runner' | 'shield' | 'bomber' | 'tank' | 'boss';
+export type EnemyKind = 'grunt' | 'runner' | 'shield' | 'bomber' | 'archer' | 'tank' | 'boss';
 export type HitPart = 'head' | 'body' | 'shield';
 
 interface KindDef {
@@ -25,6 +26,7 @@ export const KINDS: Record<EnemyKind, KindDef> = {
   runner: { name: '衝衝', hp: 30, speed: 5.5, scale: 1.05, damage: 6, score: 12, colors: { skin: 0xf6e3c4, cloth: 0xf2b02c, band: 0x2b2b2b } },
   shield: { name: '盾兵', hp: 80, speed: 1.8, scale: 1.35, damage: 12, score: 18, colors: { skin: 0xe9e2f5, cloth: 0x3f6fd6, band: 0x3f6fd6 } },
   bomber: { name: '炸彈兵', hp: 45, speed: 2, scale: 1.25, damage: 15, score: 16, colors: { skin: 0xdff2d6, cloth: 0x4c8a3c, band: 0xf0e14a } },
+  archer: { name: '弓手', hp: 40, speed: 2, scale: 1.2, damage: 8, score: 15, colors: { skin: 0xf3e0c8, cloth: 0x8a3fd6, band: 0x8a3fd6 } },
   tank: { name: '巨巨', hp: 400, speed: 1.4, scale: 2.1, damage: 25, score: 60, colors: { skin: 0xd9c2a8, cloth: 0x7a4b2e, band: 0x8a8f96 } },
   boss: { name: '大魔王', hp: 2400, speed: 1.6, scale: 3.6, damage: 35, score: 400, colors: { skin: 0xc9a7e8, cloth: 0x5a2c8a, band: 0xffd23c } },
 };
@@ -96,6 +98,12 @@ function buildChibi(kind: EnemyKind) {
     shield.add(boss);
     body.add(shield);
   }
+  if (kind === 'archer') {
+    const curve = new THREE.QuadraticBezierCurve3(new THREE.Vector3(0, 0.35, 0), new THREE.Vector3(0, 0, 0.18), new THREE.Vector3(0, -0.35, 0));
+    const bow = new THREE.Mesh(new THREE.TubeGeometry(curve, 10, 0.03, 5), lambert(0x6f4a2e));
+    bow.position.set(-0.42, 0.6, 0.15);
+    body.add(bow);
+  }
   if (kind === 'bomber') {
     const bag = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), lambert(0x333333));
     bag.position.set(0.28, 0.5, -0.25);
@@ -109,12 +117,13 @@ function buildChibi(kind: EnemyKind) {
 }
 
 export interface EnemyContext {
-  world: ArenaWorld;
+  world: WorldLike;
   player: THREE.Vector3;
   enemies: Enemy[];
   rand: () => number;
   hurt(amount: number, from: THREE.Vector3): void;
   lob(from: THREE.Vector3, to: THREE.Vector3, damage: number): void;
+  shoot(from: THREE.Vector3, damage: number): void;
 }
 
 const WINDUP = 0.5;
@@ -143,12 +152,20 @@ export class Enemy {
   private fly = new THREE.Vector3();
   private inv = new THREE.Matrix4();
   private age = 0;
+  private stuckFor = 0;
+  private sidestep = 0;
+  private sideDir = 1;
+
+  /** Height of the platform it stands on (it stays put up there), or null on the ground. */
+  readonly perch: number | null;
 
   constructor(
     readonly kind: EnemyKind,
     at: THREE.Vector3,
     hpScale: number,
+    perch: number | null = null,
   ) {
+    this.perch = perch;
     this.def = KINDS[kind];
     this.maxHp = this.hp = Math.round(this.def.hp * hpScale);
     this.model = buildChibi(kind);
@@ -254,11 +271,26 @@ export class Enemy {
     this.cooldown -= dt;
     const reach = 0.9 + 0.5 * this.def.scale;
     const move = new THREE.Vector3();
+    const ranged = this.kind === 'bomber' || this.kind === 'archer';
 
-    if (this.kind === 'bomber' || this.kind === 'boss') {
+    if (this.kind === 'archer') {
       this.throwCd -= dt;
-      const ranged = this.kind === 'bomber';
-      if (ranged && d < 12) move.copy(to).negate();
+      if (this.perch === null) {
+        if (d < 12) move.copy(to).negate();
+        else if (d > 24) move.copy(to);
+      }
+      // Draw (lean back), then loose.
+      if (this.throwCd < 0.5) this.model.body.rotation.x = -0.25 * (1 - Math.max(0, this.throwCd) / 0.5);
+      if (this.throwCd <= 0 && d < 40) {
+        ctx.shoot(this.centre().setY(root.position.y + 1.1 * this.def.scale), this.def.damage);
+        this.throwCd = 2.2 + ctx.rand() * 1.2;
+        this.model.body.rotation.x = 0;
+      }
+    } else if (this.kind === 'bomber' || this.kind === 'boss') {
+      this.throwCd -= dt;
+      if (this.perch !== null) {
+        // Stays on its platform.
+      } else if (ranged && d < 12) move.copy(to).negate();
       else if (!ranged || d > 20) move.copy(to);
       if (this.throwCd <= 0 && d < 30) {
         const shots = this.kind === 'boss' ? 3 : 1;
@@ -270,7 +302,7 @@ export class Enemy {
       }
     } else move.copy(to);
 
-    if (this.kind !== 'bomber') {
+    if (!ranged) {
       if (this.windup >= 0) {
         this.windup += dt;
         move.set(0, 0, 0);
@@ -298,14 +330,34 @@ export class Enemy {
         root.position.z += (dz / dd) * (gap - dd) * 0.5;
       }
     }
+    if (this.perch !== null) {
+      move.set(0, 0, 0);
+      this.push.set(0, 0, 0);
+    }
+    // Blocked by cover: sidestep along it for a moment.
+    if (this.sidestep > 0) {
+      this.sidestep -= dt;
+      if (move.lengthSq() > 0.01) move.set(to.z * this.sideDir, 0, -to.x * this.sideDir).addScaledVector(to, 0.25).normalize();
+    }
+    const before = root.position.clone();
     root.position.addScaledVector(move, speed * dt).addScaledVector(this.push, dt);
     this.push.multiplyScalar(Math.exp(-dt * 8));
-    ctx.world.resolve(root.position, 0.35 * this.def.scale);
+    if (this.perch === null) ctx.world.resolve(root.position, 0.35 * this.def.scale);
+    else root.position.y = this.perch;
+    const progressed = before.distanceTo(root.position);
+    if (move.lengthSq() > 0.01 && progressed < speed * dt * 0.35) {
+      this.stuckFor += dt;
+      if (this.stuckFor > 0.3) {
+        this.sidestep = 0.9;
+        this.sideDir = ctx.rand() < 0.5 ? -1 : 1;
+        this.stuckFor = 0;
+      }
+    } else this.stuckFor = 0;
 
     // Waddle.
     const walking = move.lengthSq() > 0.01;
     this.phase += dt * speed * 4 * (walking ? 1 : 0);
-    if (this.windup < 0) this.model.body.rotation.x = 0;
+    if (this.windup < 0 && this.kind !== 'archer') this.model.body.rotation.x = 0;
     this.model.body.rotation.z = Math.sin(this.phase) * 0.12;
     this.model.body.position.y = Math.abs(Math.sin(this.phase)) * 0.08;
     this.model.feet[0].position.z = 0.04 + Math.sin(this.phase) * 0.1;
@@ -326,6 +378,7 @@ export function waveRoster(k: number): EnemyKind[] {
   add('runner', k >= 2 ? 1 + k : 0);
   add('shield', k >= 3 ? Math.floor(k / 1.5) : 0);
   add('bomber', k >= 4 ? Math.floor(k / 2) : 0);
+  add('archer', k >= 2 ? 1 + Math.floor(k / 3) : 0);
   add('tank', k >= 6 ? Math.floor((k - 4) / 2) : 0);
   if (k % 5 === 0) add('boss', 1);
   // Interleave so the tough ones don't all come last (deterministic per wave).
