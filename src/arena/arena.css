@@ -1,0 +1,86 @@
+:root { color-scheme: dark; }
+html, body {
+  margin: 0; height: 100%; overflow: hidden; background: #1b1f1a; color: #fff;
+  font-family: system-ui, 'Noto Sans TC', sans-serif; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+#app { position: relative; height: 100%; width: min(100%, calc(100dvh * 9 / 16)); margin: 0 auto; overflow: hidden; }
+#game { display: block; width: 100%; height: 100%; }
+.btn {
+  font: inherit; color: #fff; background: rgba(20, 28, 36, 0.55); border: 2px solid rgba(255, 255, 255, 0.55);
+  border-radius: 12px; padding: 6px 10px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.btn:active { background: rgba(255, 255, 255, 0.3); }
+.round { position: absolute; border-radius: 50%; width: 58px; height: 58px; padding: 0; font-size: 24px; }
+.round.small { width: 46px; height: 46px; font-size: 20px; }
+.round.big { width: 96px; height: 96px; background: rgba(230, 70, 50, 0.55); border-color: rgba(255, 220, 210, 0.85); }
+.round.big::after { content: ''; position: absolute; inset: 30px; border-radius: 50%; border: 3px solid #fff; }
+.round.on { background: rgba(255, 210, 60, 0.6); }
+#btn-fire { right: 22px; bottom: 44px; touch-action: none; }
+#btn-ads { right: 128px; bottom: 60px; }
+#btn-reload { right: 34px; bottom: 156px; }
+#ammo { position: absolute; right: 92px; bottom: 156px; font-size: 22px; font-weight: 700; text-shadow: 0 1px 3px #000; text-align: right; pointer-events: none; }
+#ammo small { display: block; font-size: 11px; font-weight: 400; opacity: 0.85; }
+#slots { position: absolute; right: 16px; bottom: 214px; display: flex; flex-direction: column; gap: 6px; }
+.slot { width: 74px; padding: 4px 6px; text-align: left; font-size: 13px; }
+.slot span { float: right; opacity: 0.85; font-size: 12px; }
+.slot.on { background: rgba(255, 210, 60, 0.55); border-color: #fff; }
+#joystick {
+  position: absolute; left: 28px; bottom: 44px; width: 120px; height: 120px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15); border: 2px solid rgba(255, 255, 255, 0.4); pointer-events: none; display: none;
+}
+body.touch #joystick { display: block; }
+#joystick-knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: rgba(255, 255, 255, 0.55); }
+#top { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; align-items: center; gap: 10px; pointer-events: none; text-shadow: 0 1px 3px #000; }
+#top .btn { pointer-events: auto; width: 40px; height: 40px; padding: 0; font-size: 18px; }
+#score { font-size: 14px; flex: 1; }
+#timer { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#feed { position: absolute; top: 58px; right: 10px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; pointer-events: none; }
+#feed div { background: rgba(0, 0, 0, 0.45); padding: 3px 8px; border-radius: 8px; font-size: 12px; }
+#feed .me { background: rgba(230, 160, 20, 0.7); }
+#hp { position: absolute; left: 22px; bottom: 182px; width: 130px; height: 12px; background: rgba(0, 0, 0, 0.45); border-radius: 6px; overflow: hidden; pointer-events: none; }
+#hp-fill { height: 100%; width: 100%; background: #6be06b; transition: width 0.1s; }
+#hp-text { position: absolute; inset: 0; font-size: 10px; line-height: 12px; text-align: center; }
+#vignette { position: absolute; inset: 0; pointer-events: none; opacity: 0; box-shadow: inset 0 0 90px 30px rgba(220, 20, 20, 0.85); }
+#crosshair { position: absolute; left: 50%; top: 50%; pointer-events: none; }
+#crosshair i { position: absolute; background: #fff; box-shadow: 0 0 2px #000; }
+#crosshair .t, #crosshair .b { width: 2px; height: 9px; left: -1px; }
+#crosshair .l, #crosshair .r { height: 2px; width: 9px; top: -1px; }
+#crosshair b { position: absolute; width: 4px; height: 4px; left: -2px; top: -2px; border-radius: 50%; background: #fff; box-shadow: 0 0 2px #000; }
+#hitmarker { position: absolute; left: 50%; top: 50%; pointer-events: none; opacity: 0; }
+#hitmarker i { position: absolute; width: 3px; height: 10px; left: -1.5px; top: -5px; background: #fff; box-shadow: 0 0 2px #000; }
+#hitmarker i:nth-child(1) { transform: rotate(45deg) translateY(-11px); }
+#hitmarker i:nth-child(2) { transform: rotate(135deg) translateY(-11px); }
+#hitmarker i:nth-child(3) { transform: rotate(225deg) translateY(-11px); }
+#hitmarker i:nth-child(4) { transform: rotate(315deg) translateY(-11px); }
+#hitmarker.head i { background: #ffd23c; }
+#hitmarker.kill i { background: #ff3b30; height: 14px; }
+#floaters { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.dmg { position: absolute; font-weight: 800; font-size: 16px; color: #fff; text-shadow: 0 1px 2px #000, 0 0 4px #000; transform: translate(-50%, -50%); white-space: nowrap; }
+.dmg.head { color: #ffd23c; font-size: 19px; }
+.dmg.kill { color: #ff4b3b; font-size: 20px; }
+#banner { position: absolute; left: 0; right: 0; top: 34%; text-align: center; font-size: 22px; font-weight: 700; text-shadow: 0 2px 4px #000; pointer-events: none; }
+.overlay {
+  position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: linear-gradient(180deg, rgba(40, 120, 190, 0.86), rgba(20, 40, 60, 0.92)); padding: 20px; text-align: center;
+}
+.overlay.show { display: flex; }
+.overlay h1 { margin: 0; font-size: 30px; }
+.overlay .sub { margin: 0 0 10px; opacity: 0.9; font-size: 14px; }
+.btn.wide { width: 80%; max-width: 300px; padding: 12px; font-size: 18px; font-weight: 700; }
+.btn.wide small { display: block; font-size: 12px; font-weight: 400; opacity: 0.85; margin-top: 2px; }
+.help { font-size: 12px; opacity: 0.85; text-align: left; max-width: 330px; line-height: 1.5; }
+.help p { margin: 6px 0; }
+#ranking { border-collapse: collapse; font-size: 16px; margin-bottom: 10px; }
+#ranking td { padding: 4px 12px; }
+#ranking tr.me { color: #ffd23c; font-weight: 700; }
+body.in-menu #top, body.in-menu #slots, body.in-menu #ammo, body.in-menu .round, body.in-menu #hp, body.in-menu #crosshair, body.in-menu #joystick { display: none; }
+body.range #timer { display: none; }
+body.ads-red #crosshair { display: none; }
+#dirs { position: absolute; left: 50%; top: 50%; pointer-events: none; }
+.dir { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.dir::before {
+  content: ''; position: absolute; left: -55px; top: -125px; width: 110px; height: 34px;
+  border-top: 7px solid rgba(255, 40, 30, 0.95); border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  filter: drop-shadow(0 0 4px rgba(255, 0, 0, 0.9));
+}
+.dmg.score { color: #7dff6a; font-size: 18px; }
